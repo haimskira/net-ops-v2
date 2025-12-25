@@ -20,32 +20,23 @@
             margin: 1px;
             display: inline-block;
         }
-        /* עיצוב סקרולר פנימי לחברי קבוצה */
         .custom-scroll::-webkit-scrollbar { width: 4px; }
         .custom-scroll::-webkit-scrollbar-track { background: transparent; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
     </style>
 </head>
 <body>
-    <div class="flex justify-between items-center mb-6 bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
-        <div>
-            <h1 class="text-2xl font-bold text-purple-400">אישור אובייקטים חדשים</h1>
-            <p class="text-slate-500 text-sm">ניהול כתובות, שירותים וקבוצות הממתינים לאישור</p>
-        </div>
-        <div class="flex items-center gap-4">
-            <button onclick="loadObjects()" class="bg-slate-800 hover:bg-slate-700 p-3 rounded-xl transition-all border border-slate-700">
-                <span class="text-xl">🔄</span>
-            </button>
-            <div class="text-xs text-slate-500 italic text-left">מערכת בקרה<br>Double-Check</div>
-        </div>
+    <div class="mb-6 bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
+        <h1 class="text-2xl font-bold text-purple-400">אישור אובייקטים חדשים</h1>
+        <p class="text-slate-500 text-sm">ניהול כתובות, שירותים וקבוצות הממתינים לאישור</p>
     </div>
 
     <div id="objects-container" class="space-y-4 pb-20"></div>
 
     <div id="rejectModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 modal-bg">
-        <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl">
+        <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl relative">
             <h3 class="text-xl font-bold text-rose-400 mb-4 flex items-center gap-2">
-                <span>🚫</span> דחיית בקשת אובייקט
+                <span>🚫</span> דחיית בקשה
             </h3>
             <p class="text-slate-400 text-sm mb-3">מדוע הבקשה נדחית? (המשתמש יראה הערה זו)</p>
             <textarea id="rejectReason" 
@@ -59,27 +50,45 @@
         </div>
     </div>
 
+    <div id="approveModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 modal-bg">
+        <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl relative border-t-4 border-t-emerald-500">
+            <div class="text-center mb-6">
+                <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-emerald-100 mb-4">
+                    <span class="text-2xl">🚀</span>
+                </div>
+                <h3 class="text-xl font-bold text-emerald-400 mb-2">אישור יצירת אובייקט</h3>
+                <p class="text-slate-400 text-sm">
+                    האם אתה בטוח שברצונך לאשר בקשה זו?<br>
+                    הפעולה תיצור את האובייקט ב-Palo Alto באופן מיידי.
+                </p>
+            </div>
+            
+            <div class="flex justify-center gap-3 font-bold text-sm">
+                <button onclick="closeApproveModal()" class="text-slate-400 hover:text-white px-6 py-2 border border-slate-700 rounded-xl">ביטול</button>
+                <button id="confirmApproveBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-2 rounded-xl shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2">
+                    <span>אשר וצור</span>
+                    <span>✓</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <script>
         let allObjects = [];
         let objectIdToReject = null;
+        let objectIdToApprove = null; // משתנה חדש לשמירת ה-ID לאישור
 
         async function loadObjects() {
             try {
                 const res = await fetch('/get-admin-view-objects');
                 allObjects = await res.json();
                 
-                // עדכון קאונטר בתפריט הראשי
                 const pendingCount = allObjects.filter(o => (o.status||'').toLowerCase() === 'pending').length;
                 window.parent.postMessage({ type: 'UPDATE_COUNTER', source: 'objects', count: pendingCount }, '*');
 
                 renderUI();
             } catch (e) {
                 console.error("Error loading objects:", e);
-                document.getElementById('objects-container').innerHTML = `
-                    <div class="text-center py-20">
-                        <p class="text-rose-500 font-bold">שגיאה בתקשורת עם השרת</p>
-                        <button onclick="loadObjects()" class="mt-4 text-indigo-400 underline">נסה שוב</button>
-                    </div>`;
             }
         }
 
@@ -117,6 +126,7 @@
                     if (typeLabel.includes('SERVICE') && obj.protocol) displayVal += ` <span class="text-indigo-400 text-[10px] font-bold">[${obj.protocol.toUpperCase()}]</span>`;
                 }
 
+                // שינוי בכפתור האישור: עכשיו קורא ל-openApproveModal במקום ל-handleApprove הישן
                 return `
                 <div class="obj-card border p-5 rounded-2xl flex justify-between items-center transition-all bg-slate-900/20 ${statusClass}">
                     <div class="grid grid-cols-5 gap-6 flex-1 text-right text-sm items-center">
@@ -145,7 +155,7 @@
                     <div class="flex gap-2 mr-6 min-w-[180px] justify-end">
                         ${isPending ? `
                             <button onclick="openRejectModal(${obj.id})" class="text-rose-400 border border-rose-600/30 px-4 py-2 rounded-xl text-xs font-bold hover:bg-rose-600 hover:text-white transition-all">דחייה</button>
-                            <button onclick="handleApprove(event, ${obj.id})" class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-lg shadow-purple-500/20 transition-all">אשר וצור</button>
+                            <button onclick="openApproveModal(${obj.id})" class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-lg shadow-purple-500/20 transition-all">אשר וצור</button>
                         ` : `
                             <div class="text-left leading-tight">
                                 <p class="text-[10px] text-slate-500 italic">${obj.request_time ? obj.request_time.split(' ')[0] : ''}</p>
@@ -157,6 +167,50 @@
             }).join('');
         }
 
+        // --- לוגיקה של מודאל אישור (חדש) ---
+        function openApproveModal(id) {
+            objectIdToApprove = id;
+            document.getElementById('approveModal').classList.remove('hidden');
+            document.body.classList.add('modal-open');
+        }
+
+        function closeApproveModal() {
+            document.getElementById('approveModal').classList.add('hidden');
+            document.body.classList.remove('modal-open');
+            objectIdToApprove = null;
+        }
+
+        // לוגיקה שמבוצעת כשלוחצים "אשר וצור" בתוך המודאל
+        document.getElementById('confirmApproveBtn').onclick = async function() {
+            if (!objectIdToApprove) return;
+
+            const btn = this;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span>מעבד...</span><span class="animate-spin">🌀</span>';
+
+            try {
+                const res = await fetch(`/approve-object/${objectIdToApprove}`, { method: 'POST' });
+                const result = await res.json();
+                
+                if (result.status === 'success') {
+                    closeApproveModal();
+                    loadObjects();
+                    // אפקט הצלחה קטן (אופציונלי - אפשר להוסיף כאן טוסט)
+                } else {
+                    alert("שגיאה: " + result.message);
+                    closeApproveModal();
+                }
+            } catch (e) {
+                alert("תקלה בתקשורת");
+                closeApproveModal();
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        };
+
+        // --- לוגיקה של מודאל דחייה (קיים) ---
         function openRejectModal(id) {
             objectIdToReject = id;
             document.getElementById('rejectReason').value = "";
@@ -168,32 +222,6 @@
             document.getElementById('rejectModal').classList.add('hidden');
             document.body.classList.remove('modal-open');
             objectIdToReject = null;
-        }
-
-        async function handleApprove(event, id) {
-            if (!confirm("האם לאשר וליצור את האובייקט ב-Palo Alto?")) return;
-            
-            const btn = event.currentTarget || event.target.closest('button');
-            const originalText = btn.innerText;
-            btn.disabled = true;
-            btn.innerText = "מעבד...";
-
-            try {
-                const res = await fetch(`/approve-object/${id}`, { method: 'POST' });
-                const result = await res.json();
-                if (result.status === 'success') {
-                    loadObjects();
-                } else {
-                    alert("שגיאה: " + result.message);
-                }
-            } catch (e) {
-                alert("תקלה בתקשורת");
-            } finally {
-                if(btn) {
-                    btn.disabled = false;
-                    btn.innerText = originalText;
-                }
-            }
         }
 
         document.getElementById('confirmRejectBtn').onclick = async function() {
@@ -228,7 +256,7 @@
         };
 
         window.onload = loadObjects;
-        setInterval(loadObjects, 30000); 
+        setInterval(loadObjects, 5000); 
     </script>
 </body>
 </html>
