@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Palo Alto Rule Manager Pro</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Assistant', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        .spinner { border-top-color: transparent; animation: rot 1s linear infinite; }
+        @keyframes rot { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        input, select { 
+            background-color: #1e293b !important; 
+            border: 1px solid #334155 !important; 
+            color: #f1f5f9 !important;
+            transition: all 0.2s ease-in-out;
+        }
+        input:focus, select:focus { 
+            border-color: #6366f1 !important; 
+            box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+            outline: none;
+        }
+        .glass-card {
+            background: rgba(30, 41, 59, 0.4);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto glass-card shadow-2xl rounded-3xl overflow-hidden">
+        <div class="bg-indigo-600/20 p-8 border-b border-slate-700 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-extrabold tracking-tight text-indigo-400">Rule Manager Pro</h1>
+                <p class="text-slate-400 mt-1">ניהול חוקה מתקדם - שליחה לאישור אדמין</p>
+            </div>
+            <div id="loading-indicator" class="flex items-center gap-3 bg-slate-900/80 px-5 py-2 rounded-full border border-indigo-500/30">
+                <div class="spinner w-4 h-4 border-2 border-indigo-400 rounded-full"></div>
+                <span class="text-sm font-medium text-slate-300">טוען נתונים...</span>
+            </div>
+        </div>
+
+        <div class="p-8">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="md:col-span-2 space-y-2">
+                    <label class="font-bold text-slate-400 block text-sm mr-1">שם החוקה (Rule Name)</label>
+                    <input type="text" id="rule_name" placeholder="הכנס שם חוקה..." class="w-full p-3 rounded-xl outline-none">
+                </div>
+
+                <div class="space-y-2">
+                    <label class="font-bold text-slate-400 block text-sm mr-1">From Zone</label>
+                    <select id="from_zone" class="w-full p-3 rounded-xl outline-none"></select>
+                </div>
+                <div class="space-y-2">
+                    <label class="font-bold text-slate-400 block text-sm mr-1">To Zone</label>
+                    <select id="to_zone" class="w-full p-3 rounded-xl outline-none"></select>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="font-bold text-slate-400 block text-sm mr-1">Source IP</label>
+                    <select id="source_ip" class="w-full p-3 rounded-xl outline-none"></select>
+                </div>
+                <div class="space-y-2">
+                    <label class="font-bold text-slate-400 block text-sm mr-1">Destination IP</label>
+                    <select id="destination_ip" class="w-full p-3 rounded-xl outline-none"></select>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="font-bold text-indigo-400 block text-sm mr-1">Application (App-ID)</label>
+                    <input list="app_list" id="application" placeholder="חפש אפליקציה..." class="w-full p-3 rounded-xl outline-none border-indigo-500/30">
+                    <datalist id="app_list"></datalist>
+                </div>
+                <div class="space-y-2">
+                    <label class="font-bold text-slate-400 block text-sm mr-1">Service (Port)</label>
+                    <select id="service_port" class="w-full p-3 rounded-xl outline-none font-semibold text-indigo-400"></select>
+                </div>
+
+                <div class="space-y-2">
+                    <label class="font-bold text-slate-400 block text-sm mr-1">Tag (Normal)</label>
+                    <select id="tag" class="w-full p-3 rounded-xl outline-none"></select>
+                </div>
+                <div class="space-y-2">
+                    <label class="font-bold text-orange-400 block text-sm mr-1">Group Tag (G-)</label>
+                    <input list="group_tag_list" id="group_tag" placeholder="למשל G-Group" class="w-full p-3 rounded-xl outline-none border-dashed border-2 border-orange-500/30 focus:border-orange-500">
+                    <datalist id="group_tag_list"></datalist>
+                </div>
+            </div>
+
+            <div class="flex flex-col md:flex-row gap-4 mt-10">
+                <button onclick="submitAction('/create-rule')" class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-4 rounded-2xl shadow-lg transition transform active:scale-[0.98]">
+                    שלח בקשת חוקה לאישור
+                </button>
+
+                {% if session.get('is_admin') %}
+                <button onclick="submitAction('/commit')" class="flex-1 border border-emerald-500/50 hover:bg-emerald-500/10 text-emerald-400 font-bold py-4 rounded-2xl transition transform active:scale-[0.98] flex items-center justify-center gap-2">
+                    <span>🚀</span> Commit ישיר (Admin)
+                </button>
+                {% endif %}
+            </div>
+
+            <div id="status" class="mt-8 p-4 rounded-2xl hidden text-center font-bold border transition-all duration-300"></div>
+        </div>
+    </div>
+
+    <script>
+        // פונקציית עזר להזרקת ערכים ל-Select (מוסיפה אופציה אם לא קיימת)
+        const injectToSelect = (id, value) => {
+            const sel = document.getElementById(id);
+            if (sel) {
+                let exists = false;
+                for (let i = 0; i < sel.options.length; i++) {
+                    if (sel.options[i].value === value) { exists = true; break; }
+                }
+                if (!exists) {
+                    const opt = new Option(value, value);
+                    sel.add(opt, sel.firstChild);
+                }
+                sel.value = value;
+            }
+        };
+
+        async function fetchParams() {
+            try {
+                const response = await fetch('/get-params');
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    const populateSelect = (id, items, defaultValue) => {
+                        const el = document.getElementById(id);
+                        if(!el) return;
+                        el.innerHTML = "";
+                        items.forEach(item => {
+                            const opt = new Option(item, item);
+                            if (item === defaultValue) opt.selected = true;
+                            el.add(opt);
+                        });
+                    };
+
+                    const populateDatalist = (id, items) => {
+                        const el = document.getElementById(id);
+                        if(!el) return;
+                        el.innerHTML = "";
+                        items.forEach(item => {
+                            const opt = document.createElement('option');
+                            opt.value = item;
+                            el.appendChild(opt);
+                        });
+                    };
+
+                    populateSelect('from_zone', data.zones);
+                    populateSelect('to_zone', data.zones);
+                    populateSelect('service_port', data.services, 'application-default');
+                    populateSelect('source_ip', data.addresses);
+                    populateSelect('destination_ip', data.addresses);
+                    populateDatalist('app_list', data.applications);
+
+                    const allTags = data.tags || [];
+                    populateSelect('tag', ["None", ...allTags.filter(t => !t.startsWith('G-'))]);
+                    populateDatalist('group_tag_list', allTags.filter(t => t.startsWith('G-')));
+                    
+                    document.getElementById('application').value = 'any';
+                    document.getElementById('loading-indicator').classList.add('hidden');
+                }
+            } catch (err) {
+                showStatus("שגיאת חיבור לשרת", "error");
+            }
+        }
+
+        async function submitAction(endpoint) {
+            const data = {
+                rule_name: document.getElementById('rule_name').value.trim(),
+                from_zone: document.getElementById('from_zone').value,
+                to_zone: document.getElementById('to_zone').value,
+                source_ip: document.getElementById('source_ip').value,
+                destination_ip: document.getElementById('destination_ip').value,
+                application: document.getElementById('application').value.trim(),
+                service_port: document.getElementById('service_port').value,
+                tag: document.getElementById('tag').value,
+                group_tag: document.getElementById('group_tag').value.trim()
+            };
+
+            if (endpoint.includes('create')) {
+                if (!data.rule_name) { alert("חובה להזין שם!"); return; }
+                if (data.group_tag && !data.group_tag.startsWith('G-')) {
+                    showStatus("הקבוצה חייבת להתחיל ב-G-", "error");
+                    return;
+                }
+            }
+
+            showStatus(endpoint === '/commit' ? "מבצע Commit..." : "מעבד בקשה...", "wait");
+
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(data)
+                });
+                const result = await response.json();
+                showStatus(result.message, result.status === 'success' ? 'success' : 'error');
+            } catch (err) {
+                showStatus("שגיאת תקשורת", "error");
+            }
+        }
+
+        function showStatus(msg, type) {
+            const statusBox = document.getElementById('status');
+            statusBox.innerText = msg;
+            statusBox.classList.remove('hidden');
+            if (type === 'wait') statusBox.className = "mt-8 p-4 rounded-2xl block border-indigo-500/50 bg-indigo-500/10 text-indigo-400 font-bold";
+            else if (type === 'success') statusBox.className = "mt-8 p-4 rounded-2xl block border-emerald-500/50 bg-emerald-500/10 text-emerald-400 font-bold";
+            else if (type === 'error') statusBox.className = "mt-8 p-4 rounded-2xl block border-rose-500/50 bg-rose-500/10 text-rose-400 font-bold";
+        }
+
+        // המאזין להודעות מהלוגים
+        window.addEventListener('message', function(event) {
+            if (event.data.type === 'FILL_RULE') {
+                const logData = event.data.data;
+                console.log("Receiving log data:", logData);
+
+                // מילוי שם חוקה גנרי מבוסס מקור
+                document.getElementById('rule_name').value = `Rule_${logData.source.replace(/\./g, '_')}`;
+
+                // הזרקת הנתונים לשדות
+                injectToSelect('source_ip', logData.source);
+                injectToSelect('destination_ip', logData.destination);
+                injectToSelect('service_port', logData.dst_port);
+                
+                if (logData.app) document.getElementById('application').value = logData.app;
+                if (logData.src_zone) document.getElementById('from_zone').value = logData.src_zone;
+                if (logData.dst_zone) document.getElementById('to_zone').value = logData.dst_zone;
+                
+                showStatus("הנתונים הוזרקו מהלוגים בהצלחה", "success");
+            }
+        });
+
+        window.onload = fetchParams;
+    </script>
+</body>
+</html>

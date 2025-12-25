@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Assistant', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        .log-row { transition: all 0.2s; border-left: 3px solid transparent; }
+        .log-row:hover { background-color: rgba(99, 102, 241, 0.1); cursor: context-menu; border-left-color: #6366f1; }
+        .glass-panel { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }
+        .search-input { background: rgba(30, 41, 59, 0.5); border: 1px solid rgba(255,255,255,0.1); color: white; }
+        .search-input:focus { border-color: #6366f1; outline: none; box-shadow: 0 0 10px rgba(99, 102, 241, 0.2); }
+        /* הגדרת כיווניות שמאל לימין לטבלה */
+        .dir-ltr { direction: ltr; text-align: left; }
+    </style>
+</head>
+<body class="p-4 bg-transparent">
+    
+    <div class="mb-4 flex flex-col md:flex-row gap-4 items-center justify-between glass-panel p-3 rounded-xl">
+        <div class="relative w-full md:w-96">
+            <span class="absolute inset-y-0 right-3 flex items-center text-slate-400">🔍</span>
+            <input type="text" id="logSearch" oninput="renderLogs()" placeholder="חיפוש חופשי (IP, אפליקציה, פורט...)" 
+                   class="search-input w-full pr-10 pl-4 py-2 rounded-lg text-sm">
+        </div>
+        
+        <div class="flex items-center gap-3">
+            <button id="toggleLogsBtn" onclick="toggleLogs()" 
+                    class="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-500/20">
+                <span id="btnIcon">⏸️</span>
+                <span id="btnText">עצור לוגים</span>
+            </button>
+            <span id="logCounter" class="text-xs text-slate-500 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700 font-mono">
+                0 לוגים בזיכרון
+            </span>
+        </div>
+    </div>
+
+    <div class="overflow-hidden rounded-xl border border-slate-700 bg-slate-900/50 shadow-2xl">
+        <table class="w-full text-sm dir-ltr">
+            <thead class="bg-slate-800 text-slate-400 uppercase text-xs border-b border-slate-700">
+                <tr>
+                    <th class="p-3">Date</th>
+                    <th class="p-3">Source</th>
+                    <th class="p-3">Destination</th>
+                    <th class="p-3">Service</th>
+                    <th class="p-3 text-center">Protocol</th>
+                    <th class="p-3">Application</th>
+                </tr>
+            </thead>
+            <tbody id="logs-body" class="divide-y divide-slate-800">
+                </tbody>
+        </table>
+    </div>
+
+    <div id="context-menu" class="hidden absolute glass-panel rounded-xl shadow-2xl p-1 z-50 min-w-[180px]" dir="rtl">
+        <button onclick="createRuleFromMenu()" class="w-full text-right px-4 py-2 hover:bg-indigo-600 rounded-lg flex items-center gap-2 transition-colors">
+            <span>🛡️</span>
+            <span class="text-sm font-bold">צור חוקה ב-Rule Manager</span>
+        </button>
+    </div>
+
+    <script>
+    let allLogs = [];
+    let isPaused = false;
+    let selectedLog = null;
+
+    async function fetchLogs() {
+        if (isPaused) return;
+        try {
+            const res = await fetch('/get-live-logs');
+            allLogs = await res.json();
+            document.getElementById('logCounter').innerText = `${allLogs.length} לוגים בזיכרון`;
+            renderLogs();
+        } catch (e) { console.error("Error fetching logs:", e); }
+    }
+
+    function renderLogs() {
+        const searchTerm = document.getElementById('logSearch').value.toLowerCase();
+        const body = document.getElementById('logs-body');
+        const filteredLogs = allLogs.filter(log => {
+            const logString = `${log.time} ${log.source} ${log.destination} ${log.protocol} ${log.dst_port} ${log.app}`.toLowerCase();
+            return logString.includes(searchTerm);
+        });
+
+        body.innerHTML = filteredLogs.map(log => `
+            <tr class="log-row" oncontextmenu="showContextMenu(event, ${JSON.stringify(log).replace(/"/g, '&quot;')})">
+                <td class="p-3 text-slate-500 font-mono text-[11px]">${log.time}</td>
+                <td class="p-3 font-bold text-slate-300">${log.source}</td>
+                <td class="p-3 font-bold text-slate-300">${log.destination}</td>
+                <td class="p-3"><span class="bg-indigo-500/20 text-indigo-300 px-2 py-0.5 rounded font-mono">${log.dst_port}</span></td>
+                <td class="p-3 text-center uppercase text-[10px] font-bold text-slate-500">${log.protocol}</td>
+                <td class="p-3 text-indigo-400 font-medium">${log.app}</td>
+            </tr>
+        `).join('');
+    }
+
+    function toggleLogs() {
+        isPaused = !isPaused;
+        const btn = document.getElementById('toggleLogsBtn');
+        const icon = document.getElementById('btnIcon');
+        const text = document.getElementById('btnText');
+        if (isPaused) {
+            btn.className = "flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all bg-emerald-600 hover:bg-emerald-500 shadow-lg shadow-emerald-500/20";
+            icon.innerText = "▶️"; text.innerText = "המשך לוגים";
+        } else {
+            btn.className = "flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-sm transition-all bg-indigo-600 hover:bg-indigo-500 shadow-lg shadow-indigo-500/20";
+            icon.innerText = "⏸️"; text.innerText = "עצור לוגים";
+            fetchLogs();
+        }
+    }
+
+    function showContextMenu(e, log) {
+        e.preventDefault();
+        selectedLog = log;
+        const menu = document.getElementById('context-menu');
+        menu.style.top = `${e.pageY}px`;
+        menu.style.left = `${e.pageX}px`;
+        menu.classList.remove('hidden');
+    }
+
+    function createRuleFromMenu() {
+        if (selectedLog) {
+            // התיקון כאן: שליחת נתונים מלאה ל-Parent
+            window.parent.postMessage({ 
+                type: 'FILL_RULE', 
+                data: selectedLog 
+            }, '*');
+            document.getElementById('context-menu').classList.add('hidden');
+        }
+    }
+
+    document.addEventListener('click', () => {
+        document.getElementById('context-menu').classList.add('hidden');
+    });
+
+    setInterval(fetchLogs, 3000);
+    fetchLogs();
+</script>
+
+</body>
+</html>

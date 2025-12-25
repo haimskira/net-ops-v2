@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Assistant', sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; }
+        .obj-card { transition: all 0.3s ease; }
+        .obj-approved { border-color: #10b981 !important; background: rgba(16, 185, 129, 0.05) !important; }
+        .obj-rejected { border-color: #ef4444 !important; background: rgba(239, 68, 68, 0.05) !important; }
+    </style>
+</head>
+<body>
+    <div class="flex justify-between items-center mb-6 bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
+        <div>
+            <h1 class="text-2xl font-bold text-purple-400">אישור אובייקטים חדשים</h1>
+            <p class="text-slate-500 text-sm">ניהול כתובות, שירותים וקבוצות הממתינים לאישור</p>
+        </div>
+        <div class="text-xs text-slate-500 italic">מערכת בקרה Double-Check</div>
+    </div>
+
+    <div id="objects-container" class="space-y-4"></div>
+
+    <script>
+        let allObjects = [];
+
+        async function loadObjects() {
+            try {
+                // שימוש בראוט המאוחד כדי להציג גם היסטוריה (שלא ייעלם)
+                const res = await fetch('/get-admin-view-objects');
+                allObjects = await res.json();
+                
+                const pendingCount = allObjects.filter(o => o.status === 'Pending').length;
+                window.parent.postMessage({ type: 'UPDATE_COUNTER', source: 'objects', count: pendingCount }, '*');
+
+                renderUI();
+            } catch (e) {
+                console.error("Error loading objects:", e);
+                document.getElementById('objects-container').innerHTML = '<p class="text-rose-500 text-center py-10">שגיאה בתקשורת עם השרת</p>';
+            }
+        }
+
+        function renderUI() {
+            const container = document.getElementById('objects-container');
+            if (!allObjects || allObjects.length === 0) {
+                container.innerHTML = '<p class="text-slate-500 text-center py-10 italic border border-dashed border-slate-800 rounded-2xl">אין בקשות לאובייקטים להצגה.</p>';
+                return;
+            }
+
+            container.innerHTML = allObjects.map(obj => {
+                let statusClass = "border-slate-700 bg-slate-800/40";
+                let statusBadge = '<span class="text-orange-400 text-[10px] font-bold bg-orange-400/10 px-3 py-1 rounded-full border border-orange-400/20">ממתין ⏳</span>';
+                let showActions = obj.status === 'Pending';
+
+                if (obj.status === 'Approved') {
+                    statusClass = "obj-approved shadow-[0_0_15px_rgba(16,185,129,0.1)]";
+                    statusBadge = '<span class="text-emerald-500 text-[10px] font-bold bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">אושר ✔</span>';
+                } else if (obj.status === 'Rejected') {
+                    statusClass = "obj-rejected shadow-[0_0_15px_rgba(239,68,68,0.1)]";
+                    statusBadge = '<span class="text-rose-500 text-[10px] font-bold bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">נדחה ✘</span>';
+                }
+
+                let typeLabel = obj.type.replace('-', ' ').toUpperCase();
+                let typeColor = obj.type.includes('address') ? 'text-blue-400' : 'text-amber-400';
+
+                // בניית תצוגת ערך חכמה (IP עם Prefix, פורט עם פרוטוקול)
+                let displayVal = obj.value;
+                if (obj.type.includes('address') && obj.prefix) displayVal += `/${obj.prefix}`;
+                if (obj.type.includes('service') && obj.protocol) displayVal += ` <span class="text-indigo-400">[${obj.protocol.toUpperCase()}]</span>`;
+
+                return `
+                <div class="obj-card border p-5 rounded-2xl flex justify-between items-center transition-all ${statusClass}">
+                    <div class="grid grid-cols-5 gap-6 flex-1 text-right text-sm">
+                        <div class="border-l border-slate-700/50 pl-2">
+                            <p class="text-slate-500 text-[10px] mb-1 italic">מבקש</p>
+                            <p class="font-bold text-slate-200">👤 ${obj.requested_by}</p>
+                        </div>
+                        <div>
+                            <p class="text-slate-500 text-[10px] mb-1">סוג</p>
+                            <p class="${typeColor} font-black text-[11px]">${typeLabel}</p>
+                        </div>
+                        <div>
+                            <p class="text-slate-500 text-[10px] mb-1">שם</p>
+                            <p class="font-mono text-indigo-300 font-bold truncate">${obj.name}</p>
+                        </div>
+                        <div>
+                            <p class="text-slate-500 text-[10px] mb-1">ערך</p>
+                            <p class="text-slate-300 font-mono text-xs">${displayVal}</p>
+                        </div>
+                        <div class="flex items-center justify-center">${statusBadge}</div>
+                    </div>
+                    <div class="flex gap-2 mr-6">
+                        ${showActions ? `
+                            <button onclick="handleAction('reject', ${obj.id})" class="text-rose-400 border border-rose-600/30 px-4 py-2 rounded-xl text-xs font-bold hover:bg-rose-600 hover:text-white transition-all">דחייה</button>
+                            <button onclick="handleAction('approve', ${obj.id})" class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-lg shadow-purple-500/20 transition-all">אשר וצור</button>
+                        ` : `<p class="text-[10px] text-slate-500 italic">${obj.request_time || ''}</p>`}
+                    </div>
+                </div>`;
+            }).join('');
+        }
+
+        async function handleAction(action, id) {
+            const endpoint = action === 'approve' ? `/approve-object/${id}` : `/reject-object/${id}`;
+            try {
+                const res = await fetch(endpoint, { method: 'POST' });
+                const result = await res.json();
+                if (result.status === 'success') loadObjects();
+                else alert(result.message);
+            } catch (e) { alert("שגיאה בתקשורת"); }
+        }
+
+        window.onload = loadObjects;
+        setInterval(loadObjects, 15000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/choices.js/public/assets/styles/choices.min.css" />
+    <script src="https://cdn.jsdelivr.net/npm/choices.js/public/assets/scripts/choices.min.js"></script>
+    
+    <style>
+        body { font-family: 'Assistant', sans-serif; background-color: #0f172a; color: #f8fafc; }
+        
+        /* אנימציה לספינר */
+        .spinner { 
+            border-top-color: transparent !important; 
+            animation: rot 1s linear infinite; 
+        }
+        @keyframes rot { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+        /* התאמת Choices.js ל-Dark Mode */
+        .choices__inner { 
+            border-radius: 0.75rem !important; 
+            background-color: #1e293b !important; 
+            border: 1px solid #334155 !important; 
+            padding: 8px !important;
+            color: #f8fafc !important;
+        }
+        .choices__list--dropdown, .choices__list[aria-expanded] {
+            background-color: #1e293b !important;
+            border: 1px solid #334155 !important;
+            color: #f8fafc !important;
+        }
+        .choices__list--dropdown .choices__item--selectable.is-highlighted {
+            background-color: #4f46e5 !important;
+        }
+        .choices__list--multiple .choices__item { 
+            background-color: #4f46e5 !important; 
+            border: none !important; 
+            border-radius: 6px !important; 
+            font-weight: 600; 
+        }
+        input::placeholder { color: #64748b !important; }
+    </style>
+</head>
+<body class="p-6">
+    <div class="max-w-2xl mx-auto bg-slate-800/50 border border-slate-700 rounded-3xl p-8 shadow-2xl backdrop-blur-sm">
+        
+        <div class="flex items-center justify-between mb-6 border-b border-slate-700 pb-4">
+            <h2 class="text-2xl font-bold text-indigo-400 flex items-center gap-2">
+                <span>📦</span> יצירת אובייקט חדש
+            </h2>
+            
+            <div id="loading-indicator" class="flex items-center gap-2 bg-slate-900/80 px-4 py-1.5 rounded-full border border-indigo-500/30 shadow-inner">
+                <div class="spinner w-3.5 h-3.5 border-2 border-indigo-400 rounded-full"></div>
+                <span class="text-xs font-medium text-slate-300">טוען אובייקטים...</span>
+            </div>
+        </div>
+        
+        <div class="space-y-5">
+            <div>
+                <label class="block text-sm font-bold text-slate-400 mb-2">סוג אובייקט</label>
+                <select id="type" onchange="updateUI()" class="w-full border border-slate-700 p-3 rounded-xl bg-slate-900 text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                    <option value="address">Address (IP)</option>
+                    <option value="address-group">Address Group</option>
+                    <option value="service">Service (Port)</option>
+                    <option value="service-group">Service Group</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-bold text-slate-400 mb-2">שם האובייקט</label>
+                <input type="text" id="name" placeholder="למשל: SERVER_HTTPS_PORT" class="w-full border border-slate-700 p-3 rounded-xl bg-slate-900 text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+            </div>
+
+            <div id="single-value-container">
+                <label id="value-label" class="block text-sm font-bold text-slate-400 mb-2">ערך</label>
+                <div class="flex gap-2">
+                    <input type="text" id="value" placeholder="" class="flex-1 border border-slate-700 p-3 rounded-xl bg-slate-900 text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 transition-all">
+                    
+                    <select id="prefix_container" class="w-24 border border-slate-700 p-3 rounded-xl bg-slate-900 text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500">
+                        <option value="32">/32</option>
+                        <option value="24">/24</option>
+                    </select>
+
+                    <select id="protocol_container" class="w-28 border border-slate-700 p-3 rounded-xl bg-slate-900 text-slate-200 outline-none focus:ring-2 focus:ring-indigo-500 hidden">
+                        <option value="tcp">TCP</option>
+                        <option value="udp">UDP</option>
+                    </select>
+                </div>
+            </div>
+
+            <div id="multi-select-container" class="hidden">
+                <label id="multi-label" class="block text-sm font-bold text-slate-400 mb-2">בחר חברים מהרשימה</label>
+                <select id="members_select" class="w-full" multiple></select>
+            </div>
+        </div>
+
+        <button onclick="createObj()" id="btn" class="w-full mt-10 bg-indigo-600 text-white font-bold py-4 rounded-2xl hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20 active:scale-[0.98]">
+            צור אובייקט במערכת
+        </button>
+        
+        <div id="status" class="mt-6 p-4 rounded-xl hidden text-center font-bold border"></div>
+    </div>
+
+    <script>
+        let multiSelect;
+        
+        // --- פונקציות ולידציה חדשות ---
+        function isValidIPv4(ip) {
+            const regex = /^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$/;
+            return regex.test(ip);
+        }
+
+        function isValidPort(port) {
+            const p = parseInt(port, 10);
+            return !isNaN(p) && p >= 1 && p <= 65535; // טווח פורטים חוקי
+        }
+
+        function showError(msg) {
+            const status = document.getElementById('status');
+            status.classList.remove('hidden');
+            status.className = "mt-6 p-4 rounded-xl text-center font-bold border-rose-500/50 bg-rose-500/10 text-rose-400";
+            status.innerText = "שגיאה: " + msg;
+            
+            // הסתרת ההודעה אחרי 3 שניות
+            setTimeout(() => {
+                 status.classList.add('hidden');
+            }, 3000);
+        }
+        // ------------------------------
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const element = document.getElementById('members_select');
+            multiSelect = new Choices(element, {
+                removeItemButton: true,
+                placeholderValue: 'בחר פריטים...',
+                noChoicesText: 'לא נמצאו נתונים',
+                itemSelectText: 'לחץ לבחירה',
+                searchEnabled: true,
+            });
+            updateUI();
+        });
+
+        async function updateUI() {
+            // (אותו קוד בדיוק כמו קודם - לא השתנה)
+            const type = document.getElementById('type').value;
+            const singleCont = document.getElementById('single-value-container');
+            const multiCont = document.getElementById('multi-select-container');
+            const prefix = document.getElementById('prefix_container');
+            const protocol = document.getElementById('protocol_container');
+            const valueInput = document.getElementById('value');
+            const valueLabel = document.getElementById('value-label');
+
+            singleCont.classList.add('hidden');
+            multiCont.classList.add('hidden');
+            prefix.classList.add('hidden');
+            protocol.classList.add('hidden');
+            multiSelect.clearChoices();
+
+            if (type === 'address') {
+                singleCont.classList.remove('hidden');
+                prefix.classList.remove('hidden');
+                valueLabel.innerText = "כתובת IP";
+                valueInput.placeholder = "1.1.1.1";
+            } 
+            else if (type === 'service') {
+                singleCont.classList.remove('hidden');
+                protocol.classList.remove('hidden');
+                valueLabel.innerText = "פורט יעד (Destination Port)";
+                valueInput.placeholder = "443";
+            } 
+            else if (type === 'address-group') {
+                multiCont.classList.remove('hidden');
+                document.getElementById('multi-label').innerText = "בחר אובייקטי Address";
+                loadChoices('/get-address-objects', 'addresses');
+            } 
+            else if (type === 'service-group') {
+                multiCont.classList.remove('hidden');
+                document.getElementById('multi-label').innerText = "בחר אובייקטי Service";
+                loadChoices('/get-service-objects', 'services');
+            }
+        }
+
+        async function loadChoices(url, dataKey) {
+            // (אותו קוד בדיוק כמו קודם - לא השתנה)
+            document.getElementById('loading-indicator').classList.remove('hidden');
+            multiSelect.clearStore();
+            try {
+                const res = await fetch(url);
+                const data = await res.json();
+                if (data.status === 'success') {
+                    const items = data[dataKey].map(name => ({ value: name, label: name }));
+                    multiSelect.setChoices(items, 'value', 'label', true);
+                }
+            } catch (e) { console.error("Error loading data", e); }
+            document.getElementById('loading-indicator').classList.add('hidden');
+        }
+
+        async function createObj() {
+            const btn = document.getElementById('btn');
+            const type = document.getElementById('type').value;
+            const name = document.getElementById('name').value.trim();
+            let value;
+
+            // 1. בדיקת שם
+            if (!name) { showError("חובה להזין שם לאובייקט"); return; }
+            // בדיקה שהשם לא מכיל רווחים או תווים אסורים (אופציונלי אך מומלץ)
+            if (/[^a-zA-Z0-9_\-]/.test(name)) { showError("שם האובייקט יכול להכיל רק אותיות באנגלית, מספרים, מקף או קו תחתון"); return; }
+
+            // 2. בדיקת ערכים לפי סוג
+            if (type.includes('group')) {
+                const selected = multiSelect.getValue(true);
+                if (selected.length === 0) { showError("חובה לבחור לפחות חבר אחד לקבוצה"); return; }
+                value = selected.join(',');
+            } else {
+                value = document.getElementById('value').value.trim();
+                if (!value) { showError("חובה להזין ערך"); return; }
+
+                // --- כאן נכנסת הולידציה החדשה ---
+                if (type === 'address') {
+                    if (!isValidIPv4(value)) {
+                        showError("כתובת ה-IP שהוזנה אינה תקינה (פורמט שגוי או מספרים מחוץ לטווח)");
+                        return;
+                    }
+                } else if (type === 'service') {
+                    if (!isValidPort(value)) {
+                        showError("מספר הפורט אינו תקין (חייב להיות מספר בין 1 ל-65535)");
+                        return;
+                    }
+                }
+                // --------------------------------
+            }
+
+            const payload = {
+                type: type,
+                name: name,
+                value: value,
+                prefix: document.getElementById('prefix_container').value,
+                protocol: document.getElementById('protocol_container').value
+            };
+
+            btn.disabled = true;
+            btn.innerText = "מעבד...";
+            
+            try {
+                const res = await fetch('/create-object', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                
+                const status = document.getElementById('status');
+                status.classList.remove('hidden');
+                status.innerText = data.message;
+                
+                if (data.status === 'success') {
+                    status.className = "mt-6 p-4 rounded-xl text-center font-bold border-emerald-500/50 bg-emerald-500/10 text-emerald-400";
+                    // ניקוי הטופס בהצלחה
+                    document.getElementById('name').value = "";
+                    document.getElementById('value').value = "";
+                    if(multiSelect) multiSelect.removeActiveItems();
+                } else {
+                    status.className = "mt-6 p-4 rounded-xl text-center font-bold border-rose-500/50 bg-rose-500/10 text-rose-400";
+                }
+            } catch (e) { showError("שגיאה בתקשורת"); }
+            finally { 
+                btn.disabled = false; 
+                btn.innerText = "צור אובייקט במערכת";
+            }
+        }
+    </script>
+</body>
+</html>

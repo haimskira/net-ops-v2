@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Assistant', sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; }
+        .rule-card { transition: all 0.3s ease; }
+        .rule-approved { border-color: #10b981 !important; background: rgba(16, 185, 129, 0.05) !important; }
+        .rule-rejected { border-color: #ef4444 !important; background: rgba(239, 68, 68, 0.05) !important; }
+        .modal { backdrop-filter: blur(8px); background-color: rgba(15, 23, 42, 0.8); }
+        select, input { background-color: #1e293b !important; color: white !important; border: 1px solid #334155 !important; }
+    </style>
+</head>
+<body>
+    <div class="flex justify-between items-center mb-6 bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl">
+        <div>
+            <h1 class="text-2xl font-bold text-indigo-400">ניהול תור חוקות</h1>
+            <p class="text-slate-500 text-sm">אישור, עריכה ומעקב אחר בקשות</p>
+        </div>
+        <button onclick="commitAll()" class="bg-emerald-600 hover:bg-emerald-500 text-white px-8 py-3 rounded-xl font-bold transition-all shadow-lg active:scale-95 text-sm">בצע COMMIT סופי</button>
+    </div>
+
+    <div id="pending-container" class="space-y-4"></div>
+
+    <div id="editModal" class="hidden fixed inset-0 z-50 flex items-center justify-center modal p-4">
+        <div class="bg-slate-900 border border-slate-700 w-full max-w-3xl rounded-3xl shadow-2xl overflow-hidden">
+            <div class="p-6 border-b border-slate-800 bg-indigo-600/10 flex justify-between items-center">
+                <h2 class="text-xl font-bold text-indigo-400">עריכת פרטי חוקה לפני אישור</h2>
+                <div id="modal-loader" class="hidden text-xs text-indigo-300 animate-pulse">טוען נתונים מהפיירוול...</div>
+            </div>
+            <div class="p-8 grid grid-cols-1 md:grid-cols-2 gap-6" id="editForm">
+                <input type="hidden" id="edit_id">
+                
+                <div class="md:col-span-2 space-y-1">
+                    <label class="text-xs text-slate-500 font-bold">שם חוקה</label>
+                    <input id="edit_rule_name" class="w-full p-2.5 rounded-xl outline-none focus:border-indigo-500">
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs text-slate-500 font-bold">From Zone</label>
+                    <select id="edit_from_zone" class="w-full p-2.5 rounded-xl outline-none"></select>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs text-slate-500 font-bold">To Zone</label>
+                    <select id="edit_to_zone" class="w-full p-2.5 rounded-xl outline-none"></select>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs text-slate-500 font-bold">Source IP / Object</label>
+                    <select id="edit_source_ip" class="w-full p-2.5 rounded-xl outline-none"></select>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs text-slate-500 font-bold">Destination IP / Object</label>
+                    <select id="edit_destination_ip" class="w-full p-2.5 rounded-xl outline-none"></select>
+                </div>
+
+                <div class="space-y-1">
+                    <label class="text-xs text-indigo-400 font-bold">Application</label>
+                    <input list="modal_app_list" id="edit_app" class="w-full p-2.5 rounded-xl outline-none">
+                    <datalist id="modal_app_list"></datalist>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs text-slate-500 font-bold">Service / Port</label>
+                    <select id="edit_port" class="w-full p-2.5 rounded-xl outline-none"></select>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs text-slate-500 font-bold">Tag (Normal)</label>
+                    <select id="edit_tag" class="w-full p-2.5 rounded-xl outline-none"></select>
+                </div>
+                <div class="space-y-1">
+                    <label class="text-xs text-orange-400 font-bold">Group Tag (G-)</label>
+                    <input list="modal_group_tag_list" id="edit_group_tag" class="w-full p-2.5 rounded-xl outline-none border-dashed border border-orange-500/30">
+                    <datalist id="modal_group_tag_list"></datalist>
+                </div>
+            </div>
+            <div class="p-6 bg-slate-900/50 flex justify-end gap-3 border-t border-slate-800">
+                <button onclick="closeEdit()" class="px-6 py-2 rounded-xl text-slate-400 hover:bg-slate-800 transition-all font-bold text-sm">ביטול</button>
+                <button onclick="saveEdit()" class="px-8 py-2 rounded-xl bg-indigo-600 text-white hover:bg-indigo-500 transition-all font-bold shadow-lg text-sm">שמור עדכון</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    let allRules = [];
+    let firewallParams = null;
+    let isFetchingParams = false;
+
+    window.onload = function() {
+        loadRules();
+        fetchFirewallParams(); 
+    };
+
+    async function loadRules() {
+        try {
+            const res = await fetch('/get-admin-view-rules');
+            allRules = await res.json();
+            const pendingCount = allRules.filter(r => r.status === 'Pending').length;
+            window.parent.postMessage({ type: 'UPDATE_COUNTER', count: pendingCount }, '*');
+            renderUI(allRules);
+        } catch (e) { 
+            console.error("Error loading rules", e);
+            document.getElementById('pending-container').innerHTML = '<p class="text-rose-500 text-center">שגיאה בטעינת נתונים</p>';
+        }
+    }
+
+    async function fetchFirewallParams() {
+        if (firewallParams || isFetchingParams) return;
+        isFetchingParams = true;
+        try {
+            const res = await fetch('/get-params');
+            const data = await res.json();
+            if (data.status === 'success') {
+                firewallParams = data;
+                populateModalDropdowns();
+            }
+        } catch (e) { console.error("Error pre-fetching params", e); }
+        finally { isFetchingParams = false; }
+    }
+
+    function populateModalDropdowns() {
+        if (!firewallParams) return;
+        const fill = (id, items) => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = items.map(i => `<option value="${i}">${i}</option>`).join('');
+        };
+        fill('edit_from_zone', firewallParams.zones);
+        fill('edit_to_zone', firewallParams.zones);
+        fill('edit_source_ip', firewallParams.addresses);
+        fill('edit_destination_ip', firewallParams.addresses);
+        fill('edit_port', firewallParams.services);
+        fill('edit_tag', ["None", ...(firewallParams.tags || []).filter(t => !t.startsWith('G-'))]);
+        if(document.getElementById('modal_group_tag_list')) 
+            document.getElementById('modal_group_tag_list').innerHTML = (firewallParams.tags || []).filter(t => t.startsWith('G-')).map(t => `<option value="${t}">${t}</option>`).join('');
+        if(document.getElementById('modal_app_list'))
+            document.getElementById('modal_app_list').innerHTML = firewallParams.applications.map(a => `<option value="${a}">${a}</option>`).join('');
+    }
+
+    function renderUI(rules) {
+        const container = document.getElementById('pending-container');
+        if (!rules || rules.length === 0) {
+            container.innerHTML = '<p class="text-slate-500 text-center py-10">אין חוקות להצגה.</p>';
+            return;
+        }
+
+        container.innerHTML = rules.map(r => {
+            let statusClass = "border-slate-700";
+            let statusBadge = "";
+            let showActions = r.status === 'Pending';
+
+            if (r.status === 'Approved') {
+                statusClass = "rule-approved shadow-[0_0_15px_rgba(16,185,129,0.1)]";
+                statusBadge = '<span class="text-emerald-500 text-xs font-bold bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">אושר ✔</span>';
+            } else if (r.status === 'Rejected') {
+                statusClass = "rule-rejected shadow-[0_0_15px_rgba(239,68,68,0.1)]";
+                statusBadge = '<span class="text-rose-500 text-xs font-bold bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">נדחה ✘</span>';
+            } else {
+                statusBadge = '<span class="text-orange-400 text-xs font-bold bg-orange-400/10 px-3 py-1 rounded-full border border-orange-400/20">ממתין ⏳</span>';
+            }
+
+            return `
+            <div class="rule-card bg-slate-800/40 border p-5 rounded-2xl flex justify-between items-center ${statusClass}">
+                <div class="grid grid-cols-6 gap-4 flex-1 text-right text-sm">
+                    <div class="border-l border-slate-700/50 pl-2">
+                        <p class="text-slate-500 text-[10px] mb-1 italic">מבקש</p>
+                        <p class="font-bold text-slate-200 truncate" title="${r.requested_by}">${r.requested_by || 'מערכת'}</p>
+                    </div>
+                    <div><p class="text-slate-500 text-[10px] mb-1">חוקה</p><p class="text-indigo-400 text-xs font-bold truncate">${r.rule_name}</p></div>
+                    <div><p class="text-slate-500 text-[10px] mb-1">Source</p><p class="text-slate-300 font-medium">${r.source_ip}</p></div>
+                    <div><p class="text-slate-500 text-[10px] mb-1">Dest</p><p class="text-slate-300 font-medium">${r.destination_ip}</p></div>
+                    <div><p class="text-slate-500 text-[10px] mb-1">App/Port</p><p class="text-slate-300 font-medium">${r.application} / ${r.service_port}</p></div>
+                    <div class="flex items-center justify-center">${statusBadge}</div>
+                </div>
+                <div class="flex gap-2 mr-6">
+                    ${showActions ? `
+                        <button onclick="openEdit(${r.id})" class="bg-slate-700 p-2 rounded-xl hover:bg-indigo-600 transition-all text-sm">📝</button>
+                        <button onclick="handleAction('reject', ${r.id})" class="text-rose-400 border border-rose-600/30 px-3 py-2 rounded-xl text-[11px] font-bold hover:bg-rose-600">דחייה</button>
+                        <button onclick="handleAction('approve', ${r.id}, false)" class="bg-slate-700 px-3 py-2 rounded-xl text-[11px] font-bold">אישור</button>
+                        <button onclick="handleAction('approve', ${r.id}, true)" class="bg-indigo-600 px-3 py-2 rounded-xl text-[11px] font-bold shadow-lg">אישור+Commit</button>
+                    ` : `<p class="text-[9px] text-slate-600 italic font-mono">${r.request_time || ''}</p>`}
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    async function openEdit(id) {
+        const r = allRules.find(x => x.id === id);
+        if (!r) return;
+        document.getElementById('editModal').classList.remove('hidden');
+        document.getElementById('edit_id').value = r.id;
+        document.getElementById('edit_rule_name').value = r.rule_name;
+        document.getElementById('edit_app').value = r.application;
+        document.getElementById('edit_group_tag').value = r.group_tag || "";
+        if (!firewallParams) {
+            document.getElementById('modal-loader').classList.remove('hidden');
+            await fetchFirewallParams();
+        }
+        injectDataToModal(r);
+        document.getElementById('modal-loader').classList.add('hidden');
+    }
+
+    function injectDataToModal(r) {
+        const setVal = (id, val) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            if (el.tagName === 'SELECT' && ![...el.options].some(o => o.value === val)) {
+                el.add(new Option(val, val), el.firstChild);
+            }
+            el.value = val || (el.tagName === 'SELECT' ? "None" : "");
+        };
+        setVal('edit_from_zone', r.from_zone);
+        setVal('edit_to_zone', r.to_zone);
+        setVal('edit_source_ip', r.source_ip);
+        setVal('edit_destination_ip', r.destination_ip);
+        setVal('edit_port', r.service_port);
+        setVal('edit_tag', r.tag);
+    }
+
+    function closeEdit() { document.getElementById('editModal').classList.add('hidden'); }
+
+    async function saveEdit() {
+        const id = document.getElementById('edit_id').value;
+        const data = {
+            rule_name: document.getElementById('edit_rule_name').value,
+            from_zone: document.getElementById('edit_from_zone').value,
+            to_zone: document.getElementById('edit_to_zone').value,
+            source_ip: document.getElementById('edit_source_ip').value,
+            destination_ip: document.getElementById('edit_destination_ip').value,
+            application: document.getElementById('edit_app').value,
+            service_port: document.getElementById('edit_port').value,
+            tag: document.getElementById('edit_tag').value,
+            group_tag: document.getElementById('edit_group_tag').value
+        };
+        try {
+            const res = await fetch(`/update-pending-rule/${id}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            const result = await res.json();
+            if (result.status === 'success') { closeEdit(); loadRules(); }
+        } catch (e) { alert("שגיאה בעדכון החוקה"); }
+    }
+
+    async function handleAction(type, id, commit) {
+        if(type === 'reject' && !confirm("האם לדחות חוקה זו?")) return;
+        const url = type === 'approve' ? `/approve-single-rule/${id}` : `/reject-single-rule/${id}`;
+        try {
+            const res = await fetch(url, { method: 'POST' });
+            const result = await res.json();
+            if (result.status === 'success') {
+                if (commit) await commitAll();
+                loadRules(); 
+            } else alert(result.message);
+        } catch (e) { alert("שגיאה בתקשורת"); }
+    }
+
+    async function commitAll() {
+        try {
+            const res = await fetch('/commit', { method: 'POST' });
+            const data = await res.json();
+            alert(data.message || "ה-Commit נשלח לביצוע.");
+        } catch (e) { alert("שגיאה ב-Commit"); }
+    }
+
+    setInterval(loadRules, 15000);
+</script>
+</body>
+</html>
