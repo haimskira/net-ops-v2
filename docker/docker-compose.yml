@@ -1,0 +1,16 @@
+version: '3.3'
+
+services:
+  net-ops-portal:
+    build:
+      context: ../
+      dockerfile: DOCKER/Dockerfile
+    container_name: net-ops-portal
+    restart: unless-stopped
+    ports:
+      - "5100:5100"
+      - "514:514/udp"
+    env_file:
+      - ../.env                 # טעינת קובץ הסודות מהתיקייה הראשית
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
