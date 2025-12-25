@@ -10,16 +10,11 @@
         
         /* סטטוסים */
         .status-badge { padding: 4px 12px; border-radius: 999px; font-size: 11px; font-weight: bold; display: inline-flex; align-items: center; gap: 4px; }
-        .status-Pending { color: #fbbf24; background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.2); }
-        .status-Approved { color: #10b981; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); }
-        .status-Rejected { color: #ef4444; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); }
+        .status-pending, .status-Pending { color: #fbbf24; background: rgba(251, 191, 36, 0.1); border: 1px solid rgba(251, 191, 36, 0.2); }
+        .status-approved, .status-Approved { color: #10b981; background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.2); }
+        .status-rejected, .status-Rejected { color: #ef4444; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); }
 
-        /* אנימציה עדינה לשינוי סטטוס */
-        @keyframes highlight {
-            0% { background-color: rgba(255, 255, 255, 0.1); }
-            100% { background-color: transparent; }
-        }
-        .updated { animation: highlight 1.5s ease-out; }
+        .admin-note { background: rgba(99, 102, 241, 0.05); border-right: 2px solid #6366f1; }
     </style>
 </head>
 <body>
@@ -40,34 +35,25 @@
 
     <script>
         let isFirstLoad = true;
-        let lastDataString = ""; // לשמירת המצב הקודם למניעת ריצוד
+        let lastDataString = ""; 
 
         async function loadMyObjects() {
             const indicator = document.getElementById('refresh-indicator');
             try {
-                // הוספת timestamp כדי למנוע Cache בדפדפן
                 const res = await fetch(`/get-my-objects?t=${Date.now()}`);
                 const data = await res.json();
                 
-                // בדיקה האם המידע השתנה כדי לא לרנדר סתם
                 const currentDataString = JSON.stringify(data);
                 if (currentDataString !== lastDataString) {
                     renderUI(data);
                     lastDataString = currentDataString;
                 }
 
-                // אינדיקציה שהכל תקין
-                indicator.classList.remove('bg-rose-500');
-                indicator.classList.add('bg-emerald-500');
-
+                indicator.classList.replace('bg-rose-500', 'bg-emerald-500');
             } catch (e) {
-                console.error("Connection error", e);
-                // אינדיקציה לתקלה
-                indicator.classList.remove('bg-emerald-500');
-                indicator.classList.add('bg-rose-500');
-                
+                indicator.classList.replace('bg-emerald-500', 'bg-rose-500');
                 if (isFirstLoad) {
-                    document.getElementById('my-objects-container').innerHTML = '<p class="text-rose-500 text-center">שגיאה בטעינת נתונים</p>';
+                    document.getElementById('my-objects-container').innerHTML = '<p class="text-rose-500 text-center">שגיאה בתקשורת עם השרת</p>';
                 }
             } finally {
                 if (isFirstLoad) {
@@ -81,57 +67,62 @@
         function renderUI(objects) {
             const container = document.getElementById('my-objects-container');
             
-            if (objects.length === 0) {
+            if (!objects || objects.length === 0) {
                 container.innerHTML = '<p class="text-slate-500 text-center py-10 italic border border-dashed border-slate-800 rounded-xl">טרם הגשת בקשות.</p>';
                 return;
             }
 
-            // יצירת ה-HTML החדש
-            const newHtml = objects.map(o => {
-                let displayVal = o.value;
-                if (o.type === 'address' && o.prefix) displayVal += `/${o.prefix}`;
-                if (o.type.includes('service') && o.protocol) displayVal += ` <span class="text-indigo-400 text-[10px] font-bold">[${o.protocol.toUpperCase()}]</span>`;
+            container.innerHTML = objects.map(o => {
+                // טיפול בשמות שדות מה-DB
+                const type = o.obj_type || o.type || 'UNKNOWN';
+                const status = o.status || 'Pending';
+                
+                let displayVal = o.value || '';
+                if (type.includes('address') && o.prefix) displayVal += `/${o.prefix}`;
+                if (type.includes('service') && o.protocol) displayVal += ` <span class="text-indigo-400 text-[10px] font-bold">[${o.protocol.toUpperCase()}]</span>`;
 
-                let statusIcon = o.status === 'Pending' ? '⏳' : o.status === 'Approved' ? '✔' : '✘';
-                let statusLabel = o.status === 'Pending' ? 'ממתין' : o.status === 'Approved' ? 'אושר' : 'נדחה';
+                let statusIcon = status.toLowerCase() === 'pending' ? '⏳' : status.toLowerCase() === 'approved' ? '✔' : '✘';
+                let statusLabel = status.toLowerCase() === 'pending' ? 'ממתין' : status.toLowerCase() === 'approved' ? 'אושר' : 'נדחה';
 
-                // הוספת class 'updated' אם הסטטוס השתנה (אופציונלי לשיפור עתידי)
                 return `
-                <div class="obj-card bg-slate-800/40 border p-4 rounded-2xl flex justify-between items-center shadow-lg hover:bg-slate-800/60">
-                    <div class="grid grid-cols-4 gap-4 flex-1 text-right text-sm items-center">
-                        
-                        <div class="border-l border-slate-700/50 pl-4">
-                            <p class="text-slate-500 text-[10px] mb-0.5 italic">שם אובייקט</p>
-                            <p class="font-bold text-indigo-300 font-mono truncate" title="${o.name}">${o.name}</p>
-                        </div>
+                <div class="obj-card bg-slate-800/40 border p-4 rounded-2xl shadow-lg hover:bg-slate-800/60 transition-all">
+                    <div class="flex justify-between items-center">
+                        <div class="grid grid-cols-4 gap-4 flex-1 text-right text-sm items-center">
+                            <div class="border-l border-slate-700/50 pl-4">
+                                <p class="text-slate-500 text-[10px] mb-0.5 italic">שם אובייקט</p>
+                                <p class="font-bold text-indigo-300 font-mono truncate" title="${o.name}">${o.name}</p>
+                            </div>
 
-                        <div>
-                            <p class="text-slate-500 text-[10px] mb-0.5">סוג</p>
-                            <p class="text-slate-200 text-[11px] font-bold uppercase tracking-wider">${o.type}</p>
-                        </div>
+                            <div>
+                                <p class="text-slate-500 text-[10px] mb-0.5">סוג</p>
+                                <p class="text-slate-200 text-[11px] font-bold uppercase tracking-wider">${type.replace('-', ' ')}</p>
+                            </div>
 
-                        <div>
-                            <p class="text-slate-500 text-[10px] mb-0.5">ערך</p>
-                            <p class="text-slate-300 font-mono text-xs truncate" title="${displayVal.replace(/<[^>]*>?/gm, '')}">${displayVal}</p>
-                        </div>
+                            <div>
+                                <p class="text-slate-500 text-[10px] mb-0.5">ערך</p>
+                                <p class="text-slate-300 font-mono text-xs truncate">${displayVal}</p>
+                            </div>
 
-                        <div class="flex justify-end pl-2">
-                            <span class="status-badge status-${o.status}">
-                                ${statusLabel} ${statusIcon}
-                            </span>
+                            <div class="flex justify-end pl-2">
+                                <span class="status-badge status-${status}">
+                                    ${statusLabel} ${statusIcon}
+                                </span>
+                            </div>
                         </div>
                     </div>
+                    
+                    ${o.admin_notes ? `
+                    <div class="mt-3 p-3 admin-note rounded-lg">
+                        <p class="text-[10px] text-indigo-400 font-bold mb-1">הערת אדמין:</p>
+                        <p class="text-xs text-slate-300 italic">${o.admin_notes}</p>
+                    </div>
+                    ` : ''}
                 </div>`;
             }).join('');
-
-            container.innerHTML = newHtml;
         }
 
-        // הפעלה ראשונית
         loadMyObjects();
-        
-        // רענון כל 3 שניות (3000 מילישניות)
-        setInterval(loadMyObjects, 3000);
+        setInterval(loadMyObjects, 5000); // 5 שניות זה מספיק מהיר ומעמיס פחות
     </script>
 </body>
 </html>

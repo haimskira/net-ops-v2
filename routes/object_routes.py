@@ -1,10 +1,11 @@
 from flask import Blueprint, request, jsonify, session
 from datetime import datetime
 import time
+import ipaddress
 from managers.data_manager import db
 from managers.fw_manager import get_fw_connection
+from managers.models import ObjectRequest, db_sql
 from panos.objects import AddressObject, AddressGroup, ServiceObject, ServiceGroup
-import ipaddress
 
 objects_bp = Blueprint('objects', __name__)
 
@@ -20,10 +21,10 @@ def create_object():
         if not name or not value:
             return jsonify({"status": "error", "message": "חסרים נתונים (שם או ערך)"}), 400
 
-        # בדיקת IP
+        # בדיקת IP (רק אם זה אובייקט מסוג כתובת בודדת)
         if obj_type == 'address':
             try:
-                ipaddress.ip_address(value) # זורק שגיאה אם ה-IP לא תקין (למשל 999.999.999.999)
+                ipaddress.ip_address(value)
             except ValueError:
                 return jsonify({"status": "error", "message": f"כתובת ה-IP '{value}' אינה תקינה"}), 400
 
@@ -37,83 +38,111 @@ def create_object():
 
     except Exception as e:
         return jsonify({"status": "error", "message": f"שגיאת ולידציה: {str(e)}"}), 400
-    # -----------------------
 
-    # אם הכל תקין, ממשיכים כרגיל
-    data.update({
-        'id': int(time.time() * 1000),
-        'requested_by': session.get('user', 'Unknown'),
-        'request_time': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        'status': 'Pending'
-    })
-    db.add_pending_object(data)
-    return jsonify({"status": "success", "message": "בקשת אובייקט נשלחה לאישור אדמין!"})
+    # שמירה ב-Database
+    try:
+        data['requested_by'] = session.get('user', 'Unknown')
+        db.add_pending_object(data)
+        return jsonify({"status": "success", "message": "בקשת אובייקט נשלחה לאישור אדמין!"})
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"שגיאה בשמירה ל-DB: {str(e)}"}), 500
 
-
-@objects_bp.route('/get-pending-objects')
-def get_pending_objects():
-    if not session.get('is_admin'): return jsonify([])
-    return jsonify(db.get_pending_objects())
 
 @objects_bp.route('/get-admin-view-objects')
 def get_admin_view_objects():
     if not session.get('is_admin'): return jsonify([])
-    pending = [{**o, 'status': 'Pending'} for o in db.get_pending_objects()]
-    history = db.get_history_objects()
-    return jsonify(pending + history)
+    objs = db.get_admin_objects()
+    return jsonify([{c.name: getattr(o, c.name) for c in o.__table__.columns} for o in objs])
+
 
 @objects_bp.route('/get-my-objects')
 def get_my_objects():
     user = session.get('user')
-    pending = [dict(o, status='Pending') for o in db.get_pending_objects() if o.get('requested_by') == user]
-    history = [o for o in db.get_history_objects() if o.get('requested_by') == user]
-    return jsonify(pending + history)
+    objs = db.get_user_objects(user)
+    return jsonify([{c.name: getattr(o, c.name) for c in o.__table__.columns} for o in objs])
+
 
 @objects_bp.route('/approve-object/<int:obj_id>', methods=['POST'])
 def approve_object(obj_id):
     if not session.get('is_admin'): return jsonify({"status": "error"}), 403
     
-    obj = next((o for o in db.get_pending_objects() if o['id'] == obj_id), None)
-    if not obj: return jsonify({"status": "error", "message": "לא נמצא"}), 404
+    # שליפת האובייקט מה-DB
+    obj_req = ObjectRequest.query.get(obj_id)
+    if not obj_req or obj_req.status != 'Pending':
+        return jsonify({"status": "error", "message": "אובייקט לא נמצא או כבר טופל"}), 404
 
     try:
         fw = get_fw_connection()
-        t, n, v = obj['type'], obj['name'], obj['value']
+        t, n, v = obj_req.obj_type, obj_req.name, obj_req.value
+        new_fw_obj = None
         
-        if t == 'address': new = AddressObject(name=n, value=f"{v}/{obj.get('prefix','32')}")
-        elif t == 'address-group': new = AddressGroup(name=n, static_value=v.split(','))
-        elif t == 'service': new = ServiceObject(name=n, protocol=obj.get('protocol','tcp'), destination_port=v)
-        elif t == 'service-group': new = ServiceGroup(name=n, value=v.split(','))
+        if t == 'address':
+            # אם אין פריפיקס, נשים 32 כברירת מחדל
+            val_with_mask = f"{v}/{obj_req.prefix}" if obj_req.prefix else f"{v}/32"
+            new_fw_obj = AddressObject(name=n, value=val_with_mask)
+            
+        elif t == 'address-group':
+            # המרה של מחרוזת פסיקים לרשימה עבור הפנאוס
+            members = [m.strip() for m in v.split(',')]
+            new_fw_obj = AddressGroup(name=n, static_value=members)
+            
+        elif t == 'service':
+            new_fw_obj = ServiceObject(name=n, protocol=obj_req.protocol or 'tcp', destination_port=str(v))
+            
+        elif t == 'service-group':
+            members = [m.strip() for m in v.split(',')]
+            new_fw_obj = ServiceGroup(name=n, static_value=members)
         
-        fw.add(new)
-        new.create()
+        if new_fw_obj:
+            fw.add(new_fw_obj)
+            new_fw_obj.create()
+            
+            # עדכון סטטוס ב-DB ל-Approved
+            db.update_object_status(obj_id, 'Approved', notes="Object created successfully in Firewall")
+            return jsonify({"status": "success", "message": f"האובייקט {n} נוצר בהצלחה."})
         
-        db.remove_pending_object(obj_id)
-        obj['status'] = 'Approved'
-        db.add_history_object(obj)
-        return jsonify({"status": "success", "message": "אובייקט נוצר"})
-    except Exception as e: return jsonify({"status": "error", "message": str(e)})
+        return jsonify({"status": "error", "message": "סוג אובייקט לא מוכר"}), 400
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"שגיאת תקשורת מול הפיירוול: {str(e)}"}), 500
+
 
 @objects_bp.route('/reject-object/<int:obj_id>', methods=['POST'])
 def reject_object(obj_id):
     if not session.get('is_admin'): return jsonify({"status": "error"}), 403
-    obj = next((o for o in db.get_pending_objects() if o['id'] == obj_id), None)
-    if obj:
-        db.remove_pending_object(obj_id)
-        obj['status'] = 'Rejected'
-        db.add_history_object(obj)
-    return jsonify({"status": "success", "message": "נדחה"})
+    
+    # קבלת סיבת הדחייה מה-JSON
+    data = request.json or {}
+    reason = data.get('reason', 'נדחה על ידי אדמין')
+    
+    success = db.update_object_status(obj_id, 'Rejected', notes=reason)
+    if success:
+        return jsonify({"status": "success", "message": "האובייקט נדחה וסיבת הדחייה נשמרה"})
+    
+    return jsonify({"status": "error", "message": "אובייקט לא נמצא"}), 404
+
 
 @objects_bp.route('/get-address-objects')
 def get_address_objects():
+    """שליפת אובייקטים קיימים מהפיירוול לצורך בחירה לקבוצה"""
     try:
         fw = get_fw_connection()
-        return jsonify({"status": "success", "addresses": sorted([a.name for a in AddressObject.refreshall(fw) if a.name])})
-    except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({
+            "status": "success", 
+            "addresses": sorted([a.name for a in AddressObject.refreshall(fw) if a.name])
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
+
 
 @objects_bp.route('/get-service-objects')
 def get_service_objects():
+    """שליפת אובייקטי שירות קיימים מהפיירוול לצורך בחירה לקבוצה"""
     try:
         fw = get_fw_connection()
-        return jsonify({"status": "success", "services": sorted([s.name for s in ServiceObject.refreshall(fw) if s.name])})
-    except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({
+            "status": "success", 
+            "services": sorted([s.name for s in ServiceObject.refreshall(fw) if s.name])
+        })
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500

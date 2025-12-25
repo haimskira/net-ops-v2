@@ -14,6 +14,7 @@ ops_bp = Blueprint('ops', __name__)
 @ops_bp.route('/get-live-logs')
 def get_live_logs():
     """מחזיר את הלוגים שנשמרו בזיכרון (Syslog)"""
+    # החזרת רשימת הלוגים העדכנית מה-DataManager
     return jsonify(db.traffic_logs)
 
 @ops_bp.route('/commit', methods=['POST'])

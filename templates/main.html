@@ -131,7 +131,6 @@
     </div>
 
     <script>
-        // ניהול רשימת התצוגות לסגירה מהירה
         const views = [
             'palo-alto-view', 'object-creator-view', 'policy-match-view', 
             'log-viewer-view', 'my-requests-view', 'my-objects-view', 
@@ -161,7 +160,6 @@
             document.getElementById('welcome-view').classList.remove('hidden');
         }
 
-        // האזנה להודעות מה-Iframes לעדכון המונים בזמן אמת
         window.addEventListener('message', function(event) {
             if (event.data.type === 'UPDATE_COUNTER') {
                 if (event.data.source === 'rules') {
@@ -173,7 +171,6 @@
                 }
             }
 
-            // פונקציונליות "מילוי חוקה" מהלוגים
             if (event.data.type === 'FILL_RULE') {
                 toggleComponent('palo-alto'); 
                 setTimeout(() => {
@@ -185,19 +182,26 @@
             }
         });
 
-        // עדכון מונים אוטומטי כל 15 שניות
+        // עדכון מונים אוטומטי - שימוש בנתיבים המעודכנים למניעת 404
         async function updateBadges() {
             try {
-                const [r, o] = await Promise.all([
-                    fetch('/get-pending-rules').then(res => res.json()),
-                    fetch('/get-pending-objects').then(res => res.json())
+                const [rRes, oRes] = await Promise.all([
+                    fetch('/get-admin-view-rules'),
+                    fetch('/get-admin-view-objects')
                 ]);
+                
+                const rData = await rRes.json();
+                const oData = await oRes.json();
+                
+                // סינון רק הממתינים מתוך רשימת ההיסטוריה המאוחדת
+                const pendingRules = rData.filter(r => (r.status || '').toLowerCase() === 'pending').length;
+                const pendingObjs = oData.filter(o => (o.status || '').toLowerCase() === 'pending').length;
                 
                 const ruleBadge = document.getElementById('nav-rule-badge');
                 const objBadge = document.getElementById('nav-obj-badge');
                 
-                if(ruleBadge) ruleBadge.innerText = r.length;
-                if(objBadge) objBadge.innerText = o.length;
+                if(ruleBadge) ruleBadge.innerText = pendingRules;
+                if(objBadge) objBadge.innerText = pendingObjs;
             } catch(e) {
                 console.error("Badge sync error:", e);
             }

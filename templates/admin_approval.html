@@ -32,12 +32,10 @@
             </div>
             <div class="p-8 grid grid-cols-1 md:grid-cols-2 gap-6" id="editForm">
                 <input type="hidden" id="edit_id">
-                
                 <div class="md:col-span-2 space-y-1">
                     <label class="text-xs text-slate-500 font-bold">שם חוקה</label>
                     <input id="edit_rule_name" class="w-full p-2.5 rounded-xl outline-none focus:border-indigo-500">
                 </div>
-
                 <div class="space-y-1">
                     <label class="text-xs text-slate-500 font-bold">From Zone</label>
                     <select id="edit_from_zone" class="w-full p-2.5 rounded-xl outline-none"></select>
@@ -46,7 +44,6 @@
                     <label class="text-xs text-slate-500 font-bold">To Zone</label>
                     <select id="edit_to_zone" class="w-full p-2.5 rounded-xl outline-none"></select>
                 </div>
-
                 <div class="space-y-1">
                     <label class="text-xs text-slate-500 font-bold">Source IP / Object</label>
                     <select id="edit_source_ip" class="w-full p-2.5 rounded-xl outline-none"></select>
@@ -55,7 +52,6 @@
                     <label class="text-xs text-slate-500 font-bold">Destination IP / Object</label>
                     <select id="edit_destination_ip" class="w-full p-2.5 rounded-xl outline-none"></select>
                 </div>
-
                 <div class="space-y-1">
                     <label class="text-xs text-indigo-400 font-bold">Application</label>
                     <input list="modal_app_list" id="edit_app" class="w-full p-2.5 rounded-xl outline-none">
@@ -82,25 +78,34 @@
         </div>
     </div>
 
+    <div id="rejectModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 modal">
+        <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl">
+            <h3 class="text-xl font-bold text-rose-400 mb-4">דחיית בקשת חוקה</h3>
+            <p class="text-slate-400 text-sm mb-3">ציין סיבה עבור המשתמש:</p>
+            <textarea id="rejectReason" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white mb-6 h-32 outline-none" placeholder="למה החוקה נדחית?"></textarea>
+            <div class="flex justify-end gap-3 font-bold">
+                <button onclick="closeRejectModal()" class="text-slate-400 hover:text-white px-4 py-2">ביטול</button>
+                <button id="confirmRejectBtn" class="bg-rose-600 hover:bg-rose-500 text-white px-6 py-2 rounded-xl">דחה בקשה</button>
+            </div>
+        </div>
+    </div>
+
     <script>
     let allRules = [];
     let firewallParams = null;
     let isFetchingParams = false;
+    let ruleIdToReject = null;
 
-    window.onload = function() {
-        loadRules();
-        fetchFirewallParams(); 
-    };
+    window.onload = function() { loadRules(); fetchFirewallParams(); };
 
     async function loadRules() {
         try {
             const res = await fetch('/get-admin-view-rules');
             allRules = await res.json();
             const pendingCount = allRules.filter(r => r.status === 'Pending').length;
-            window.parent.postMessage({ type: 'UPDATE_COUNTER', count: pendingCount }, '*');
+            window.parent.postMessage({ type: 'UPDATE_COUNTER', source: 'rules', count: pendingCount }, '*');
             renderUI(allRules);
         } catch (e) { 
-            console.error("Error loading rules", e);
             document.getElementById('pending-container').innerHTML = '<p class="text-rose-500 text-center">שגיאה בטעינת נתונים</p>';
         }
     }
@@ -115,7 +120,7 @@
                 firewallParams = data;
                 populateModalDropdowns();
             }
-        } catch (e) { console.error("Error pre-fetching params", e); }
+        } catch (e) { console.error("Error params", e); }
         finally { isFetchingParams = false; }
     }
 
@@ -131,10 +136,8 @@
         fill('edit_destination_ip', firewallParams.addresses);
         fill('edit_port', firewallParams.services);
         fill('edit_tag', ["None", ...(firewallParams.tags || []).filter(t => !t.startsWith('G-'))]);
-        if(document.getElementById('modal_group_tag_list')) 
-            document.getElementById('modal_group_tag_list').innerHTML = (firewallParams.tags || []).filter(t => t.startsWith('G-')).map(t => `<option value="${t}">${t}</option>`).join('');
-        if(document.getElementById('modal_app_list'))
-            document.getElementById('modal_app_list').innerHTML = firewallParams.applications.map(a => `<option value="${a}">${a}</option>`).join('');
+        document.getElementById('modal_group_tag_list').innerHTML = (firewallParams.tags || []).filter(t => t.startsWith('G-')).map(t => `<option value="${t}">${t}</option>`).join('');
+        document.getElementById('modal_app_list').innerHTML = firewallParams.applications.map(a => `<option value="${a}">${a}</option>`).join('');
     }
 
     function renderUI(rules) {
@@ -143,39 +146,30 @@
             container.innerHTML = '<p class="text-slate-500 text-center py-10">אין חוקות להצגה.</p>';
             return;
         }
-
         container.innerHTML = rules.map(r => {
-            let statusClass = "border-slate-700";
-            let statusBadge = "";
-            let showActions = r.status === 'Pending';
-
-            if (r.status === 'Approved') {
-                statusClass = "rule-approved shadow-[0_0_15px_rgba(16,185,129,0.1)]";
-                statusBadge = '<span class="text-emerald-500 text-xs font-bold bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">אושר ✔</span>';
-            } else if (r.status === 'Rejected') {
-                statusClass = "rule-rejected shadow-[0_0_15px_rgba(239,68,68,0.1)]";
-                statusBadge = '<span class="text-rose-500 text-xs font-bold bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">נדחה ✘</span>';
-            } else {
-                statusBadge = '<span class="text-orange-400 text-xs font-bold bg-orange-400/10 px-3 py-1 rounded-full border border-orange-400/20">ממתין ⏳</span>';
-            }
-
+            let statusClass = r.status === 'Approved' ? "rule-approved shadow-[0_0_15px_rgba(16,185,129,0.1)]" : r.status === 'Rejected' ? "rule-rejected shadow-[0_0_15px_rgba(239,68,68,0.1)]" : "border-slate-700";
+            let statusBadge = r.status === 'Approved' ? '<span class="text-emerald-500 text-xs font-bold bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">אושר ✔</span>' : r.status === 'Rejected' ? '<span class="text-rose-500 text-xs font-bold bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">נדחה ✘</span>' : '<span class="text-orange-400 text-xs font-bold bg-orange-400/10 px-3 py-1 rounded-full border border-orange-400/20">ממתין ⏳</span>';
+            
             return `
             <div class="rule-card bg-slate-800/40 border p-5 rounded-2xl flex justify-between items-center ${statusClass}">
-                <div class="grid grid-cols-6 gap-4 flex-1 text-right text-sm">
+                <div class="grid grid-cols-6 gap-4 flex-1 text-right text-sm items-center">
                     <div class="border-l border-slate-700/50 pl-2">
                         <p class="text-slate-500 text-[10px] mb-1 italic">מבקש</p>
-                        <p class="font-bold text-slate-200 truncate" title="${r.requested_by}">${r.requested_by || 'מערכת'}</p>
+                        <p class="font-bold text-slate-200 truncate">${r.requested_by || 'מערכת'}</p>
                     </div>
                     <div><p class="text-slate-500 text-[10px] mb-1">חוקה</p><p class="text-indigo-400 text-xs font-bold truncate">${r.rule_name}</p></div>
                     <div><p class="text-slate-500 text-[10px] mb-1">Source</p><p class="text-slate-300 font-medium">${r.source_ip}</p></div>
                     <div><p class="text-slate-500 text-[10px] mb-1">Dest</p><p class="text-slate-300 font-medium">${r.destination_ip}</p></div>
                     <div><p class="text-slate-500 text-[10px] mb-1">App/Port</p><p class="text-slate-300 font-medium">${r.application} / ${r.service_port}</p></div>
-                    <div class="flex items-center justify-center">${statusBadge}</div>
+                    <div class="flex flex-col items-center gap-1">
+                        ${statusBadge}
+                        ${r.admin_notes ? `<p class="text-[9px] text-rose-300 italic truncate max-w-[80px]">💬 ${r.admin_notes}</p>` : ''}
+                    </div>
                 </div>
                 <div class="flex gap-2 mr-6">
-                    ${showActions ? `
+                    ${r.status === 'Pending' ? `
                         <button onclick="openEdit(${r.id})" class="bg-slate-700 p-2 rounded-xl hover:bg-indigo-600 transition-all text-sm">📝</button>
-                        <button onclick="handleAction('reject', ${r.id})" class="text-rose-400 border border-rose-600/30 px-3 py-2 rounded-xl text-[11px] font-bold hover:bg-rose-600">דחייה</button>
+                        <button onclick="openRejectModal(${r.id})" class="text-rose-400 border border-rose-600/30 px-3 py-2 rounded-xl text-[11px] font-bold hover:bg-rose-600">דחייה</button>
                         <button onclick="handleAction('approve', ${r.id}, false)" class="bg-slate-700 px-3 py-2 rounded-xl text-[11px] font-bold">אישור</button>
                         <button onclick="handleAction('approve', ${r.id}, true)" class="bg-indigo-600 px-3 py-2 rounded-xl text-[11px] font-bold shadow-lg">אישור+Commit</button>
                     ` : `<p class="text-[9px] text-slate-600 italic font-mono">${r.request_time || ''}</p>`}
@@ -183,6 +177,26 @@
             </div>`;
         }).join('');
     }
+
+    function openRejectModal(id) {
+        ruleIdToReject = id;
+        document.getElementById('rejectReason').value = "";
+        document.getElementById('rejectModal').classList.remove('hidden');
+    }
+    function closeRejectModal() { document.getElementById('rejectModal').classList.add('hidden'); }
+
+    document.getElementById('confirmRejectBtn').onclick = async function() {
+        const reason = document.getElementById('rejectReason').value.trim();
+        if(!reason) return alert("חובה סיבה");
+        try {
+            const res = await fetch(`/reject-single-rule/${ruleIdToReject}`, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reason: reason })
+            });
+            if((await res.json()).status === 'success') { closeRejectModal(); loadRules(); }
+        } catch(e) { alert("שגיאה"); }
+    };
 
     async function openEdit(id) {
         const r = allRules.find(x => x.id === id);
@@ -192,12 +206,8 @@
         document.getElementById('edit_rule_name').value = r.rule_name;
         document.getElementById('edit_app').value = r.application;
         document.getElementById('edit_group_tag').value = r.group_tag || "";
-        if (!firewallParams) {
-            document.getElementById('modal-loader').classList.remove('hidden');
-            await fetchFirewallParams();
-        }
+        if (!firewallParams) await fetchFirewallParams();
         injectDataToModal(r);
-        document.getElementById('modal-loader').classList.add('hidden');
     }
 
     function injectDataToModal(r) {
@@ -232,36 +242,33 @@
             tag: document.getElementById('edit_tag').value,
             group_tag: document.getElementById('edit_group_tag').value
         };
-        try {
-            const res = await fetch(`/update-pending-rule/${id}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            const result = await res.json();
-            if (result.status === 'success') { closeEdit(); loadRules(); }
-        } catch (e) { alert("שגיאה בעדכון החוקה"); }
+        const res = await fetch(`/update-pending-rule/${id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+        if ((await res.json()).status === 'success') { closeEdit(); loadRules(); }
     }
 
     async function handleAction(type, id, commit) {
-        if(type === 'reject' && !confirm("האם לדחות חוקה זו?")) return;
         const url = type === 'approve' ? `/approve-single-rule/${id}` : `/reject-single-rule/${id}`;
         try {
-            const res = await fetch(url, { method: 'POST' });
-            const result = await res.json();
-            if (result.status === 'success') {
+            const res = await fetch(url, { 
+                method: 'POST', 
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reason: "אושר עלי ידי אדמין" }) 
+            });
+            if ((await res.json()).status === 'success') {
                 if (commit) await commitAll();
                 loadRules(); 
-            } else alert(result.message);
-        } catch (e) { alert("שגיאה בתקשורת"); }
+            }
+        } catch (e) { alert("שגיאה"); }
     }
 
     async function commitAll() {
-        try {
-            const res = await fetch('/commit', { method: 'POST' });
-            const data = await res.json();
-            alert(data.message || "ה-Commit נשלח לביצוע.");
-        } catch (e) { alert("שגיאה ב-Commit"); }
+        const res = await fetch('/commit', { method: 'POST' });
+        const data = await res.json();
+        alert(data.message || "Commit נשלח.");
     }
 
     setInterval(loadRules, 15000);

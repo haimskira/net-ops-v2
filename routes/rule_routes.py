@@ -4,6 +4,7 @@ import time
 from managers.data_manager import db
 from managers.fw_manager import get_fw_connection, CustomSecurityRule, ensure_service_object
 from panos.policies import Rulebase
+from managers.models import RuleRequest # ייבוא המודל לצורך שאילתות ישירות במידת הצורך
 
 rules_bp = Blueprint('rules', __name__)
 
@@ -11,86 +12,72 @@ rules_bp = Blueprint('rules', __name__)
 def create_rule():
     data = request.json
     try:
-        data['id'] = int(time.time() * 1000)
         data['requested_by'] = session.get('user', 'Unknown')
-        data['request_time'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # ה-ID נוצר אוטומטית ב-DB כ-Primary Key, אז לא חייבים ליצור ידנית
         db.add_pending_rule(data)
         return jsonify({"status": "success", "message": "החוקה נשלחה לאישור אדמין!"})
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-@rules_bp.route('/get-pending-rules', methods=['GET'])
-def get_pending_rules():
-    return jsonify(db.get_pending_rules())
-
 @rules_bp.route('/get-admin-view-rules')
 def get_admin_view_rules():
     if not session.get('is_admin'): return jsonify([])
-    # איחוד רשימות לצורך תצוגה
-    pending = [{**r, 'status': 'Pending'} for r in db.get_pending_rules()]
-    history = db.get_history_rules()
-    return jsonify(pending + history)
+    rules = db.get_admin_view_rules()
+    # המרת אובייקטי SQLAlchemy למילונים לצורך JSON
+    return jsonify([r.to_dict() if hasattr(r, 'to_dict') else {c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rules])
 
 @rules_bp.route('/get-my-requests')
 def get_my_requests():
     user = session.get('user')
-    pending = [dict(r, status='Pending') for r in db.get_pending_rules() if r.get('requested_by') == user]
-    history = [r for r in db.get_history_rules() if r.get('requested_by') == user]
-    return jsonify(pending + history)
+    rules = db.get_user_requests(user)
+    return jsonify([{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rules])
 
 @rules_bp.route('/approve-single-rule/<int:rule_id>', methods=['POST'])
 def approve_single_rule(rule_id):
     if not session.get('is_admin'): return jsonify({"status": "error"}), 403
     
-    # חיפוש החוקה ב-DB
-    rule_data = next((r for r in db.get_pending_rules() if r.get('id') == rule_id), None)
-    if not rule_data: return jsonify({"status": "error", "message": "לא נמצא"}), 404
+    # שליפת הבקשה מה-DB באמצעות SQLAlchemy
+    from managers.models import RuleRequest
+    rule_req = RuleRequest.query.get(rule_id)
+    
+    if not rule_req or rule_req.status != 'Pending':
+        return jsonify({"status": "error", "message": "בקשה לא נמצאה או שכבר טופלה"}), 404
 
     try:
         fw = get_fw_connection()
         rulebase = Rulebase()
         fw.add(rulebase)
-        svc_name = ensure_service_object(fw, str(rule_data['service_port']), rule_data.get('protocol', 'tcp'))
         
-        final_rule_name = f"{rule_data['rule_name']}_{int(time.time() % 10000)}"
+        svc_name = ensure_service_object(fw, str(rule_req.service_port), rule_req.protocol or 'tcp')
+        final_rule_name = f"{rule_req.rule_name}_{int(time.time() % 10000)}"
         
         new_rule = CustomSecurityRule(
             name=final_rule_name,
-            fromzone=[rule_data['from_zone']], tozone=[rule_data['to_zone']],
-            source=[rule_data['source_ip']], destination=[rule_data['destination_ip']],
-            application=[rule_data['application']], service=[svc_name],
-            tag=[rule_data.get('tag')] if rule_data.get('tag') != "None" else [],
-            action='allow', group_tag=rule_data.get('group_tag')
+            fromzone=[rule_req.from_zone], tozone=[rule_req.to_zone],
+            source=[rule_req.source_ip], destination=[rule_req.destination_ip],
+            application=[rule_req.application], service=[svc_name],
+            tag=[rule_req.tag] if rule_req.tag and rule_req.tag != "None" else [],
+            action='allow', group_tag=rule_req.group_tag
         )
         rulebase.add(new_rule)
         new_rule.create()
 
-        # עדכון DB: העברה להיסטוריה
-        db.remove_pending_rule(rule_id)
-        rule_data['status'] = 'Approved'
-        rule_data['final_name'] = final_rule_name
-        db.add_history_rule(rule_data)
+        # עדכון הסטטוס ב-DB ל-Approved
+        db.update_rule_status(rule_id, 'Approved', session.get('user'), final_name=final_rule_name)
         
         return jsonify({"status": "success", "message": f"החוקה {final_rule_name} נוצרה."})
-    except Exception as e: return jsonify({"status": "error", "message": str(e)}), 500
+    except Exception as e: 
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 @rules_bp.route('/reject-single-rule/<int:rule_id>', methods=['POST'])
 def reject_single_rule(rule_id):
     if not session.get('is_admin'): return jsonify({"status": "error"}), 403
-    rule_data = next((r for r in db.get_pending_rules() if r.get('id') == rule_id), None)
-    if rule_data:
-        db.remove_pending_rule(rule_id)
-        rule_data['status'] = 'Rejected'
-        db.add_history_rule(rule_data)
-        return jsonify({"status": "success", "message": "החוקה נדחתה"})
-    return jsonify({"status": "error"}), 404
-
-@rules_bp.route('/update-pending-rule/<int:rule_id>', methods=['POST'])
-def update_pending_rule(rule_id):
-    if not session.get('is_admin'): return jsonify({"status": "error"}), 403
+    
     data = request.json
-    for rule in db.get_pending_rules():
-        if rule['id'] == rule_id:
-            rule.update(data) # מעדכן את האובייקט בזיכרון
-            return jsonify({"status": "success"})
-    return jsonify({"status": "error"}), 404
+    reason = data.get('reason', 'לא צוינה סיבה')
+    admin_name = session.get('user', 'Admin')
+
+    success = db.update_rule_status(rule_id, 'Rejected', admin_name, notes=reason)
+    if success:
+        return jsonify({"status": "success", "message": "החוקה נדחתה"})
+    return jsonify({"status": "error", "message": "בקשה לא נמצאה"}), 404

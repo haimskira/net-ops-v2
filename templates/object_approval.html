@@ -9,6 +9,21 @@
         .obj-card { transition: all 0.3s ease; }
         .obj-approved { border-color: #10b981 !important; background: rgba(16, 185, 129, 0.05) !important; }
         .obj-rejected { border-color: #ef4444 !important; background: rgba(239, 68, 68, 0.05) !important; }
+        .modal-open { overflow: hidden; }
+        .modal-bg { background: rgba(0, 0, 0, 0.8); backdrop-filter: blur(4px); }
+        .member-badge {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-size: 10px;
+            margin: 1px;
+            display: inline-block;
+        }
+        /* עיצוב סקרולר פנימי לחברי קבוצה */
+        .custom-scroll::-webkit-scrollbar { width: 4px; }
+        .custom-scroll::-webkit-scrollbar-track { background: transparent; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
     </style>
 </head>
 <body>
@@ -17,101 +32,203 @@
             <h1 class="text-2xl font-bold text-purple-400">אישור אובייקטים חדשים</h1>
             <p class="text-slate-500 text-sm">ניהול כתובות, שירותים וקבוצות הממתינים לאישור</p>
         </div>
-        <div class="text-xs text-slate-500 italic">מערכת בקרה Double-Check</div>
+        <div class="flex items-center gap-4">
+            <button onclick="loadObjects()" class="bg-slate-800 hover:bg-slate-700 p-3 rounded-xl transition-all border border-slate-700">
+                <span class="text-xl">🔄</span>
+            </button>
+            <div class="text-xs text-slate-500 italic text-left">מערכת בקרה<br>Double-Check</div>
+        </div>
     </div>
 
-    <div id="objects-container" class="space-y-4"></div>
+    <div id="objects-container" class="space-y-4 pb-20"></div>
+
+    <div id="rejectModal" class="hidden fixed inset-0 z-50 flex items-center justify-center p-4 modal-bg">
+        <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md shadow-2xl">
+            <h3 class="text-xl font-bold text-rose-400 mb-4 flex items-center gap-2">
+                <span>🚫</span> דחיית בקשת אובייקט
+            </h3>
+            <p class="text-slate-400 text-sm mb-3">מדוע הבקשה נדחית? (המשתמש יראה הערה זו)</p>
+            <textarea id="rejectReason" 
+                      class="w-full bg-slate-800 border border-slate-700 rounded-xl p-4 text-white mb-6 h-32 focus:ring-2 focus:ring-rose-500 outline-none resize-none transition-all"
+                      placeholder="למשל: האובייקט כבר קיים במערכת בשם אחר..."></textarea>
+            
+            <div class="flex justify-end gap-3 font-bold text-sm">
+                <button onclick="closeRejectModal()" class="text-slate-400 hover:text-white px-4 py-2">ביטול</button>
+                <button id="confirmRejectBtn" class="bg-rose-600 hover:bg-rose-500 text-white px-6 py-2 rounded-xl shadow-lg shadow-rose-900/20 transition-all">דחה בקשה</button>
+            </div>
+        </div>
+    </div>
 
     <script>
         let allObjects = [];
+        let objectIdToReject = null;
 
         async function loadObjects() {
             try {
-                // שימוש בראוט המאוחד כדי להציג גם היסטוריה (שלא ייעלם)
                 const res = await fetch('/get-admin-view-objects');
                 allObjects = await res.json();
                 
-                const pendingCount = allObjects.filter(o => o.status === 'Pending').length;
+                // עדכון קאונטר בתפריט הראשי
+                const pendingCount = allObjects.filter(o => (o.status||'').toLowerCase() === 'pending').length;
                 window.parent.postMessage({ type: 'UPDATE_COUNTER', source: 'objects', count: pendingCount }, '*');
 
                 renderUI();
             } catch (e) {
                 console.error("Error loading objects:", e);
-                document.getElementById('objects-container').innerHTML = '<p class="text-rose-500 text-center py-10">שגיאה בתקשורת עם השרת</p>';
+                document.getElementById('objects-container').innerHTML = `
+                    <div class="text-center py-20">
+                        <p class="text-rose-500 font-bold">שגיאה בתקשורת עם השרת</p>
+                        <button onclick="loadObjects()" class="mt-4 text-indigo-400 underline">נסה שוב</button>
+                    </div>`;
             }
         }
 
         function renderUI() {
             const container = document.getElementById('objects-container');
             if (!allObjects || allObjects.length === 0) {
-                container.innerHTML = '<p class="text-slate-500 text-center py-10 italic border border-dashed border-slate-800 rounded-2xl">אין בקשות לאובייקטים להצגה.</p>';
+                container.innerHTML = '<p class="text-slate-500 text-center py-20 italic border border-dashed border-slate-800 rounded-2xl">אין בקשות לאובייקטים להצגה.</p>';
                 return;
             }
 
             container.innerHTML = allObjects.map(obj => {
+                const status = (obj.status || 'Pending').toLowerCase();
                 let statusClass = "border-slate-700 bg-slate-800/40";
                 let statusBadge = '<span class="text-orange-400 text-[10px] font-bold bg-orange-400/10 px-3 py-1 rounded-full border border-orange-400/20">ממתין ⏳</span>';
-                let showActions = obj.status === 'Pending';
+                let isPending = status === 'pending';
 
-                if (obj.status === 'Approved') {
+                if (status === 'approved') {
                     statusClass = "obj-approved shadow-[0_0_15px_rgba(16,185,129,0.1)]";
                     statusBadge = '<span class="text-emerald-500 text-[10px] font-bold bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">אושר ✔</span>';
-                } else if (obj.status === 'Rejected') {
+                } else if (status === 'rejected') {
                     statusClass = "obj-rejected shadow-[0_0_15px_rgba(239,68,68,0.1)]";
                     statusBadge = '<span class="text-rose-500 text-[10px] font-bold bg-rose-500/10 px-3 py-1 rounded-full border border-rose-500/20">נדחה ✘</span>';
                 }
 
-                let typeLabel = obj.type.replace('-', ' ').toUpperCase();
-                let typeColor = obj.type.includes('address') ? 'text-blue-400' : 'text-amber-400';
+                let typeLabel = (obj.obj_type || obj.type || 'UNKNOWN').replace('-', ' ').toUpperCase();
+                let typeColor = typeLabel.includes('ADDRESS') ? 'text-blue-400' : 'text-amber-400';
 
-                // בניית תצוגת ערך חכמה (IP עם Prefix, פורט עם פרוטוקול)
-                let displayVal = obj.value;
-                if (obj.type.includes('address') && obj.prefix) displayVal += `/${obj.prefix}`;
-                if (obj.type.includes('service') && obj.protocol) displayVal += ` <span class="text-indigo-400">[${obj.protocol.toUpperCase()}]</span>`;
+                let displayVal = "";
+                if (typeLabel.includes('GROUP')) {
+                    const members = obj.value ? obj.value.split(',') : [];
+                    displayVal = members.map(m => `<span class="member-badge">${m.trim()}</span>`).join('');
+                } else {
+                    displayVal = `<span class="font-mono text-slate-300">${obj.value}</span>`;
+                    if (typeLabel.includes('ADDRESS') && obj.prefix) displayVal += `<span class="text-slate-500">/${obj.prefix}</span>`;
+                    if (typeLabel.includes('SERVICE') && obj.protocol) displayVal += ` <span class="text-indigo-400 text-[10px] font-bold">[${obj.protocol.toUpperCase()}]</span>`;
+                }
 
                 return `
-                <div class="obj-card border p-5 rounded-2xl flex justify-between items-center transition-all ${statusClass}">
-                    <div class="grid grid-cols-5 gap-6 flex-1 text-right text-sm">
+                <div class="obj-card border p-5 rounded-2xl flex justify-between items-center transition-all bg-slate-900/20 ${statusClass}">
+                    <div class="grid grid-cols-5 gap-6 flex-1 text-right text-sm items-center">
                         <div class="border-l border-slate-700/50 pl-2">
                             <p class="text-slate-500 text-[10px] mb-1 italic">מבקש</p>
-                            <p class="font-bold text-slate-200">👤 ${obj.requested_by}</p>
+                            <p class="font-bold text-slate-200 truncate">👤 ${obj.requested_by}</p>
                         </div>
                         <div>
                             <p class="text-slate-500 text-[10px] mb-1">סוג</p>
-                            <p class="${typeColor} font-black text-[11px]">${typeLabel}</p>
+                            <p class="${typeColor} font-black text-[11px] tracking-tighter">${typeLabel}</p>
                         </div>
                         <div>
-                            <p class="text-slate-500 text-[10px] mb-1">שם</p>
-                            <p class="font-mono text-indigo-300 font-bold truncate">${obj.name}</p>
+                            <p class="text-slate-500 text-[10px] mb-1">שם האובייקט</p>
+                            <p class="font-mono text-indigo-300 font-bold truncate text-xs" title="${obj.name}">${obj.name}</p>
                         </div>
-                        <div>
-                            <p class="text-slate-500 text-[10px] mb-1">ערך</p>
-                            <p class="text-slate-300 font-mono text-xs">${displayVal}</p>
+                        <div class="col-span-1">
+                            <p class="text-slate-500 text-[10px] mb-1">ערך / חברי קבוצה</p>
+                            <div class="max-h-12 overflow-y-auto custom-scroll">${displayVal}</div>
                         </div>
-                        <div class="flex items-center justify-center">${statusBadge}</div>
+                        <div class="flex flex-col items-center gap-1">
+                            ${statusBadge}
+                            ${obj.admin_notes ? `<p class="text-[9px] text-rose-300 italic max-w-[120px] truncate" title="${obj.admin_notes}">💬 ${obj.admin_notes}</p>` : ''}
+                        </div>
                     </div>
-                    <div class="flex gap-2 mr-6">
-                        ${showActions ? `
-                            <button onclick="handleAction('reject', ${obj.id})" class="text-rose-400 border border-rose-600/30 px-4 py-2 rounded-xl text-xs font-bold hover:bg-rose-600 hover:text-white transition-all">דחייה</button>
-                            <button onclick="handleAction('approve', ${obj.id})" class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-lg shadow-purple-500/20 transition-all">אשר וצור</button>
-                        ` : `<p class="text-[10px] text-slate-500 italic">${obj.request_time || ''}</p>`}
+                    
+                    <div class="flex gap-2 mr-6 min-w-[180px] justify-end">
+                        ${isPending ? `
+                            <button onclick="openRejectModal(${obj.id})" class="text-rose-400 border border-rose-600/30 px-4 py-2 rounded-xl text-xs font-bold hover:bg-rose-600 hover:text-white transition-all">דחייה</button>
+                            <button onclick="handleApprove(event, ${obj.id})" class="bg-purple-600 hover:bg-purple-500 text-white px-6 py-2 rounded-xl text-xs font-bold shadow-lg shadow-purple-500/20 transition-all">אשר וצור</button>
+                        ` : `
+                            <div class="text-left leading-tight">
+                                <p class="text-[10px] text-slate-500 italic">${obj.request_time ? obj.request_time.split(' ')[0] : ''}</p>
+                                <p class="text-[9px] text-indigo-400/40 font-mono uppercase">Ref: #${obj.id}</p>
+                            </div>
+                        `}
                     </div>
                 </div>`;
             }).join('');
         }
 
-        async function handleAction(action, id) {
-            const endpoint = action === 'approve' ? `/approve-object/${id}` : `/reject-object/${id}`;
-            try {
-                const res = await fetch(endpoint, { method: 'POST' });
-                const result = await res.json();
-                if (result.status === 'success') loadObjects();
-                else alert(result.message);
-            } catch (e) { alert("שגיאה בתקשורת"); }
+        function openRejectModal(id) {
+            objectIdToReject = id;
+            document.getElementById('rejectReason').value = "";
+            document.getElementById('rejectModal').classList.remove('hidden');
+            document.body.classList.add('modal-open');
         }
 
+        function closeRejectModal() {
+            document.getElementById('rejectModal').classList.add('hidden');
+            document.body.classList.remove('modal-open');
+            objectIdToReject = null;
+        }
+
+        async function handleApprove(event, id) {
+            if (!confirm("האם לאשר וליצור את האובייקט ב-Palo Alto?")) return;
+            
+            const btn = event.currentTarget || event.target.closest('button');
+            const originalText = btn.innerText;
+            btn.disabled = true;
+            btn.innerText = "מעבד...";
+
+            try {
+                const res = await fetch(`/approve-object/${id}`, { method: 'POST' });
+                const result = await res.json();
+                if (result.status === 'success') {
+                    loadObjects();
+                } else {
+                    alert("שגיאה: " + result.message);
+                }
+            } catch (e) {
+                alert("תקלה בתקשורת");
+            } finally {
+                if(btn) {
+                    btn.disabled = false;
+                    btn.innerText = originalText;
+                }
+            }
+        }
+
+        document.getElementById('confirmRejectBtn').onclick = async function() {
+            const reason = document.getElementById('rejectReason').value.trim();
+            if (!reason) {
+                alert("חובה להזין סיבת דחייה.");
+                return;
+            }
+
+            this.disabled = true;
+            this.innerText = "מעדכן...";
+
+            try {
+                const res = await fetch(`/reject-object/${objectIdToReject}`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ reason: reason })
+                });
+                const result = await res.json();
+                if (result.status === 'success') {
+                    closeRejectModal();
+                    loadObjects();
+                } else {
+                    alert("שגיאה: " + result.message);
+                }
+            } catch (e) {
+                alert("שגיאה בתקשורת");
+            } finally {
+                this.disabled = false;
+                this.innerText = "דחה בקשה";
+            }
+        };
+
         window.onload = loadObjects;
-        setInterval(loadObjects, 15000);
+        setInterval(loadObjects, 30000); 
     </script>
 </body>
 </html>

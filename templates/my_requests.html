@@ -4,72 +4,135 @@
     <meta charset="UTF-8">
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;700&display=swap" rel="stylesheet">
-<style>
-    body { font-family: 'Assistant', sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; }
-    /* תיקון השגיאה - CSS רגיל */
-    .status-pill { 
-        padding: 0.25rem 0.75rem; 
-        border-radius: 9999px; 
-        font-size: 0.75rem; 
-        font-weight: 700; 
-    }
-</style>
+    <style>
+        body { font-family: 'Assistant', sans-serif; background-color: #0f172a; color: #f8fafc; padding: 20px; }
+        
+        .status-pill { 
+            padding: 0.25rem 0.75rem; 
+            border-radius: 9999px; 
+            font-size: 0.75rem; 
+            font-weight: 700; 
+        }
+
+        /* עיצוב בועת הערת אדמין */
+        .admin-note-box {
+            margin-top: 12px;
+            padding: 12px;
+            background: rgba(99, 102, 241, 0.05);
+            border: 1px solid rgba(99, 102, 241, 0.2);
+            border-radius: 12px;
+            position: relative;
+        }
+        
+        .admin-note-box::before {
+            content: "💬";
+            position: absolute;
+            left: 12px;
+            top: 10px;
+            opacity: 0.5;
+        }
+    </style>
 </head>
 <body>
-    <h1 class="text-xl font-bold text-indigo-400 mb-6">מעקב בקשות חוקתיות</h1>
-    <div id="requests-list" class="space-y-3"></div>
+    <div class="max-w-4xl mx-auto">
+        <div class="flex justify-between items-center mb-8 bg-slate-900/50 p-6 rounded-2xl border border-slate-800 shadow-xl">
+            <div>
+                <h1 class="text-2xl font-bold text-indigo-400">מעקב בקשות חוקה</h1>
+                <p class="text-slate-500 text-sm italic">כאן תוכל לראות את סטטוס אישורי הפיירוול שלך</p>
+            </div>
+            <button onclick="loadRequests()" class="text-slate-400 hover:text-white transition-all">🔄</button>
+        </div>
+
+        <div id="requests-list" class="space-y-4">
+            <div class="text-center py-10 opacity-50">
+                <div class="inline-block animate-spin rounded-full h-6 w-6 border-t-2 border-indigo-500 mb-2"></div>
+                <p class="text-xs">מרענן נתונים...</p>
+            </div>
+        </div>
+    </div>
 
     <script>
         async function loadRequests() {
             try {
-                const res = await fetch('/get-my-requests');
+                // הוספת timestamp למניעת Cache
+                const res = await fetch(`/get-my-requests?t=${Date.now()}`);
                 const data = await res.json();
                 const container = document.getElementById('requests-list');
                 
-                if (data.length === 0) {
-                    container.innerHTML = '<p class="text-slate-500 text-center py-10">אין בקשות להצגה.</p>';
+                if (!data || data.length === 0) {
+                    container.innerHTML = `
+                        <div class="text-center py-20 border border-dashed border-slate-800 rounded-3xl">
+                            <p class="text-slate-500 italic">לא נמצאו בקשות חוקה המשויכות אליך.</p>
+                        </div>`;
                     return;
                 }
 
-                container.innerHTML = data.reverse().map(r => {
+                // הצגת הבקשות (החדשות ביותר למעלה)
+                container.innerHTML = data.map(r => {
+                    const status = (r.status || 'Pending').toLowerCase();
                     let statusClass = "bg-orange-500/10 text-orange-500 border-orange-500/20";
-                    let statusText = "ממתין לאישור";
+                    let statusText = "ממתין לבדיקה";
                     let icon = "⏳";
 
-                    if (r.status === 'Approved') {
+                    if (status === 'approved') {
                         statusClass = "bg-emerald-500/10 text-emerald-500 border-emerald-500/20";
                         statusText = "אושר ובוצע";
                         icon = "✅";
-                    } else if (r.status === 'Rejected') {
+                    } else if (status === 'rejected') {
                         statusClass = "bg-rose-500/10 text-rose-500 border-rose-500/20";
                         statusText = "נדחה על ידי אדמין";
                         icon = "❌";
                     }
 
                     return `
-                        <div class="bg-slate-900/50 border border-slate-800 p-4 rounded-xl flex justify-between items-center transition-all hover:bg-slate-800/50 shadow-lg">
-                            <div class="flex items-center gap-4">
-                                <span class="text-xl">${icon}</span>
-                                <div>
-                                    <p class="font-bold text-slate-200">${r.rule_name}</p>
-                                    <p class="text-xs text-slate-500">${r.source_ip} ➔ ${r.destination_ip} (${r.service_port}/${r.protocol})</p>
+                        <div class="bg-slate-900/40 border border-slate-800 p-5 rounded-2xl transition-all hover:bg-slate-800/40 shadow-lg">
+                            <div class="flex justify-between items-start">
+                                <div class="flex items-start gap-4">
+                                    <span class="text-2xl mt-1">${icon}</span>
+                                    <div>
+                                        <p class="font-bold text-slate-100 text-lg">${r.rule_name}</p>
+                                        <div class="flex flex-wrap gap-y-1 gap-x-4 mt-1">
+                                            <p class="text-xs text-slate-400 font-mono">
+                                                <span class="text-indigo-400/70">SOURCE:</span> ${r.source_ip}
+                                            </p>
+                                            <p class="text-xs text-slate-400 font-mono">
+                                                <span class="text-indigo-400/70">DEST:</span> ${r.destination_ip}
+                                            </p>
+                                            <p class="text-xs text-slate-300 font-bold">
+                                                <span class="text-indigo-400/70">PORT:</span> ${r.service_port}/${r.protocol || 'tcp'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="text-left flex flex-col items-end">
+                                    <span class="status-pill border ${statusClass}">
+                                        ${statusText}
+                                    </span>
+                                    <p class="text-[10px] text-slate-600 mt-3 font-mono">${r.request_time || ''}</p>
+                                    <p class="text-[9px] text-indigo-500/30 font-mono mt-1">ID: #${r.id}</p>
                                 </div>
                             </div>
-                            <div class="text-left text-right">
-                                <span class="px-3 py-1 rounded-full text-[10px] font-bold border ${statusClass}">
-                                    ${statusText}
-                                </span>
-                                <p class="text-[9px] text-slate-600 mt-2">${r.request_time || ''}</p>
-                            </div>
+
+                            ${r.admin_notes ? `
+                                <div class="admin-note-box">
+                                    <p class="text-[11px] text-indigo-400 font-bold mb-1 mr-6">הערת מנהל המערכת:</p>
+                                    <p class="text-sm text-slate-300 italic mr-6 leading-relaxed">${r.admin_notes}</p>
+                                </div>
+                            ` : ''}
                         </div>
                     `;
                 }).join('');
             } catch (e) {
                 console.error("Error loading requests:", e);
+                document.getElementById('requests-list').innerHTML = 
+                    '<p class="text-rose-500 text-center py-10">תקלה בתקשורת עם השרת. נסה לרענן.</p>';
             }
         }
         
+        // טעינה ראשונית
         loadRequests();
+
+        // רענון אוטומטי כל 10 שניות
         setInterval(loadRequests, 10000);
     </script>
 </body>
